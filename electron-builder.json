@@ -1,0 +1,30 @@
+{
+    "appId": "com.ai-teaching.tool",
+    "productName": "AI教辅作图工具",
+    "asar": true,
+    "electronVersion": "31.7.7",
+    "directories": {
+        "output": "release"
+    },
+    "files": [
+        "src/main/**/*",
+        "src/preload/**/*",
+        "src/shared/**/*",
+        "dist/renderer/**/*",
+        "assets/**/*"
+    ],
+    "win": {
+        "target": ["nsis", "portable"],
+        "icon": "assets/icon.png"
+    },
+    "nsis": {
+        "oneClick": false,
+        "allowToChangeInstallationDirectory": true,
+        "createDesktopShortcut": true,
+        "createStartMenuShortcut": true,
+        "shortcutName": "AI教辅作图工具"
+    },
+    "portable": {
+        "artifactName": "${productName}-${version}-portable.exe"
+    }
+}

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+.cache/
+*.log
+*.tmp
+.vscode/
+.claude/
+AI教辅作图工具-win32-x64/

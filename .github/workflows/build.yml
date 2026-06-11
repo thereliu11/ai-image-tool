@@ -1,0 +1,60 @@
+name: Build Windows App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build:renderer
+
+      - name: Build Electron app
+        run: npx electron-builder --config electron-builder.json --win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean up release
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force release/win-unpacked -ErrorAction SilentlyContinue
+          Remove-Item -Force release/builder-debug.yml -ErrorAction SilentlyContinue
+          Remove-Item -Force release/*.blockmap -ErrorAction SilentlyContinue
+          Get-ChildItem release
+
+      - name: Upload Setup EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI教辅作图工具-Setup
+          path: release/*Setup*.exe
+
+      - name: Upload Portable EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI教辅作图工具-Portable
+          path: release/*portable*.exe
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*Setup*.exe
+            release/*portable*.exe
+          draft: false
+          prerelease: false
