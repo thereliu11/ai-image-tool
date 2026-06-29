@@ -12,6 +12,10 @@
           <el-icon><Upload /></el-icon>
           有新版本
         </el-button>
+        <el-button size="small" @click="manualCheckUpdate" :loading="updateState.checking">
+          <el-icon><Refresh /></el-icon>
+          检查更新
+        </el-button>
       </div>
 
       <!-- 顶部功能导航 -->
@@ -728,7 +732,8 @@ const updateState = ref({
   downloading: false,
   progress: 0,
   downloadSpeed: '',
-  downloaded: false
+  downloaded: false,
+  checking: false
 })
 const importPageRanges = ref('')
 const textImageRedoRequest = ref(null)
@@ -964,6 +969,32 @@ onUnmounted(() => {
   window.electronAPI.removeAllListeners('update-progress')
   window.electronAPI.removeAllListeners('update-item-status')
 })
+
+// 手动检查更新
+async function manualCheckUpdate() {
+  if (!window.electronAPI.checkForUpdates) {
+    ElMessage.warning('当前版本不支持自动更新检查')
+    return
+  }
+
+  updateState.value.checking = true
+  try {
+    const result = await window.electronAPI.checkForUpdates()
+    if (result.success) {
+      if (result.updateInfo) {
+        ElMessage.success('发现新版本！')
+      } else {
+        ElMessage.info('当前已是最新版本')
+      }
+    } else {
+      ElMessage.error('检查更新失败: ' + (result.error || '未知错误'))
+    }
+  } catch (error) {
+    ElMessage.error('检查更新失败: ' + error.message)
+  } finally {
+    updateState.value.checking = false
+  }
+}
 
 // 加载配置
 async function loadConfig() {
