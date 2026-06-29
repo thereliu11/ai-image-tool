@@ -8,7 +8,7 @@
         {
             "provider": "github",
             "owner": "thereliu11",
-            "repo": "AI教辅作图工具",
+            "repo": "ai-image-tool",
             "releaseType": "release"
         }
     ],
