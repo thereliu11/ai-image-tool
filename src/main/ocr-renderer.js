@@ -64,20 +64,34 @@ async function extractTextFromImage(imagePath, config) {
     generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
   };
 
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
-    requestBody, axiosConfig
-  );
+  try {
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
+      requestBody, axiosConfig
+    );
 
-  const candidates = response.data.candidates || [];
-  if (candidates.length > 0 && candidates[0].content && candidates[0].content.parts) {
-    const textPart = candidates[0].content.parts.find(p => p.text);
-    if (textPart) {
-      const jsonMatch = textPart.text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    const candidates = response.data.candidates || [];
+    if (candidates.length > 0 && candidates[0].content && candidates[0].content.parts) {
+      const textPart = candidates[0].content.parts.find(p => p.text);
+      if (textPart) {
+        const jsonMatch = textPart.text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      }
     }
+    throw new Error('无法提取文字数据');
+  } catch (error) {
+    // 完善错误处理
+    if (error.response) {
+      const status = error.response.status;
+      if (status === 429) {
+        const err = new Error('接口返回 429：请求过于频繁或额度不足，请稍后重试、降低并发、或更换 API Key。');
+        err.response = error.response; // 保留响应头信息
+        throw err;
+      }
+      throw new Error(`Gemini OCR请求失败 (${status}): ${error.message}`);
+    }
+    throw error;
   }
-  throw new Error('无法提取文字数据');
 }
 
 /**
@@ -139,21 +153,35 @@ ${styleConfig.style}
     }
   };
 
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent`,
-    requestBody, axiosConfig
-  );
+  try {
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent`,
+      requestBody, axiosConfig
+    );
 
-  // 解析响应，提取图片
-  const candidates = response.data.candidates || [];
-  if (candidates.length > 0 && candidates[0].content && candidates[0].content.parts) {
-    const imagePart = candidates[0].content.parts.find(p => p.inlineData);
-    if (imagePart) {
-      return imagePart.inlineData.data; // base64图片数据
+    // 解析响应，提取图片
+    const candidates = response.data.candidates || [];
+    if (candidates.length > 0 && candidates[0].content && candidates[0].content.parts) {
+      const imagePart = candidates[0].content.parts.find(p => p.inlineData);
+      if (imagePart) {
+        return imagePart.inlineData.data; // base64图片数据
+      }
     }
-  }
 
-  throw new Error('Nano Banana未能生成图片');
+    throw new Error('Nano Banana未能生成图片');
+  } catch (error) {
+    // 完善错误处理
+    if (error.response) {
+      const status = error.response.status;
+      if (status === 429) {
+        const err = new Error('接口返回 429：请求过于频繁或额度不足，请稍后重试、降低并发、或更换 API Key。');
+        err.response = error.response; // 保留响应头信息
+        throw err;
+      }
+      throw new Error(`Nano Banana图片生成失败 (${status}): ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 /**

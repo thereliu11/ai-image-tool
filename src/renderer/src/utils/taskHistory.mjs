@@ -7,28 +7,71 @@ function normalizeStatus(status) {
   return 'pending'
 }
 
+export function createGeneratedHistoryRecord({
+  type = 'create',
+  title,
+  folderName,
+  sourceImage,
+  generatedImage,
+  status = 'completed',
+  reviewStatus,
+  provider,
+  model,
+  mode,
+  prompt,
+  error,
+  taskId,
+  itemId,
+  metadata,
+  timestamp
+} = {}) {
+  const normalizedStatus = normalizeStatus(status)
+  const now = timestamp || new Date().toISOString()
+  const stableId = taskId || `${title || 'untitled'}-${generatedImage || sourceImage || now}`
+
+  return {
+    id: `${type}-${stableId}`,
+    type,
+    taskId: stableId,
+    itemId: itemId || taskId || '',
+    title: title || '未命名记录',
+    folderName: folderName || '统一历史',
+    sourceImage: sourceImage || '',
+    generatedImage: generatedImage || '',
+    status: normalizedStatus,
+    reviewStatus: reviewStatus || (normalizedStatus === 'failed' ? 'review' : 'pending'),
+    provider: provider || 'openai',
+    model: model || 'gpt-image-2',
+    mode: mode || type,
+    prompt: prompt || '',
+    error: error || '',
+    metadata: metadata || {},
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
 export function createTaskRecord({ item, folderName, provider, model, mode, prompt }) {
   const status = normalizeStatus(item.status)
   const now = new Date().toISOString()
   const stablePart = `${item.id || '0'}-${item.title || item.referenceImage || now}`
 
-  return {
-    id: `${folderName || '未命名项目'}-${stablePart}`,
+  return createGeneratedHistoryRecord({
+    type: 'redraw',
+    taskId: `${folderName || '未命名项目'}-${stablePart}`,
     itemId: item.id,
     title: item.title || '未命名素材',
     folderName: folderName || item.folderName || '未命名项目',
     sourceImage: item.referenceImage || '',
     generatedImage: item.generatedImage || '',
     status,
-    reviewStatus: status === 'failed' ? 'review' : 'pending',
     provider: provider || 'openai',
     model: model || 'gpt-image-2',
     mode: mode || 'openaiRedraw',
     prompt: prompt || '',
     error: item.error || '',
-    createdAt: now,
-    updatedAt: now
-  }
+    timestamp: now
+  })
 }
 
 export function upsertTaskRecord(records, record) {
@@ -50,6 +93,49 @@ export function markTaskRecord(records, recordId, reviewStatus) {
       ? { ...record, reviewStatus, updatedAt: new Date().toISOString() }
       : record
   ))
+}
+
+export function deleteTaskRecord(records, recordId) {
+  return (Array.isArray(records) ? records : []).filter(record => record.id !== recordId)
+}
+
+export function clearTaskRecords() {
+  return []
+}
+
+export function createHistoryRedoPayload(record = {}) {
+  if (!record || typeof record !== 'object') {
+    return null
+  }
+
+  if (record.type === 'textToImage') {
+    return {
+      type: 'textToImage',
+      title: record.title || '文生图重做',
+      prompt: record.prompt || '',
+      ratio: record.metadata?.ratio || '3:4',
+      quality: record.metadata?.quality || 'medium',
+      mode: record.mode || 'cover'
+    }
+  }
+
+  if (record.type === 'redraw') {
+    return {
+      type: 'redraw',
+      title: record.title || '参考图重绘',
+      prompt: record.prompt || '',
+      sourceImage: record.sourceImage || '',
+      mode: record.mode || 'openaiRedraw',
+      itemId: record.itemId || ''
+    }
+  }
+
+  return {
+    type: record.type || 'unknown',
+    title: record.title || '历史重做',
+    prompt: record.prompt || '',
+    mode: record.mode || record.type || ''
+  }
 }
 
 export function filterTaskRecords(records, filter) {

@@ -5,12 +5,16 @@
       <div class="header-left">
         <h1 class="app-title">
           <el-icon><MagicStick /></el-icon>
-          AI作图工具
+          智绘AI
         </h1>
-        <span class="version">v0.0.9</span>
+        <span class="version">v26.06.29</span>
+        <el-button v-if="updateState.hasUpdate" type="warning" size="small" class="update-badge" @click="showUpdateDialog = true">
+          <el-icon><Upload /></el-icon>
+          有新版本
+        </el-button>
       </div>
 
-      <!-- 6大Tab导航 -->
+      <!-- 顶部功能导航 -->
       <nav class="header-tabs">
         <button
           v-for="tab in tabs"
@@ -25,6 +29,14 @@
       </nav>
 
       <div class="header-right">
+        <el-button @click="showCreativeSuite = true">
+          <el-icon><Collection /></el-icon>
+          创作套件
+        </el-button>
+        <el-button @click="showUnifiedHistory = true">
+          <el-icon><Clock /></el-icon>
+          历史
+        </el-button>
         <el-button @click="handleExport" :disabled="store.completedCount === 0">
           <el-icon><Download /></el-icon>
           导出
@@ -39,6 +51,9 @@
           <el-icon><ChatDotRound /></el-icon>
           AI助手
         </el-button>
+        <el-button @click="showPlatformCenter = true">
+          平台中心
+        </el-button>
       </div>
     </header>
 
@@ -46,6 +61,35 @@
     <main class="app-main">
       <!-- ==================== Tab: 创作 ==================== -->
       <div v-show="activeTab === 'create'" class="tab-content tab-create">
+        <div class="create-status-strip">
+          <div class="status-meta">
+            <strong>{{ store.currentFolderName || '未导入素材' }}</strong>
+            <span>{{ store.currentFolderPath || '选择图片、PDF 或 Word 后开始批量生成' }}</span>
+          </div>
+          <div class="status-chips">
+            <button type="button" class="status-chip" :class="{ active: goodsStatusFilter === 'all' }" @click="goodsStatusFilter = 'all'">
+              <strong>{{ goodsReviewStats.total }}</strong>
+              <span>总素材</span>
+            </button>
+            <button type="button" class="status-chip" :class="{ active: goodsSelectedOnly }" @click="goodsSelectedOnly = !goodsSelectedOnly">
+              <strong>{{ goodsReviewStats.selected }}</strong>
+              <span>已勾选</span>
+            </button>
+            <button type="button" class="status-chip success" :class="{ active: goodsStatusFilter === 'completed' }" @click="goodsStatusFilter = 'completed'">
+              <strong>{{ goodsReviewStats.completed }}</strong>
+              <span>已完成</span>
+            </button>
+            <button type="button" class="status-chip danger" :class="{ active: goodsStatusFilter === 'failed' }" @click="goodsStatusFilter = 'failed'">
+              <strong>{{ goodsReviewStats.failed }}</strong>
+              <span>失败</span>
+            </button>
+          </div>
+          <div class="status-mode">
+            <el-tag effect="plain">{{ selectedRenderModeLabel }}</el-tag>
+            <el-tag effect="plain">{{ selectedSizeLabel }}</el-tag>
+            <el-tag effect="plain">{{ selectedResolutionLabel }}</el-tag>
+          </div>
+        </div>
         <!-- 左侧面板 -->
         <aside class="left-panel">
           <!-- 商品列表 -->
@@ -56,17 +100,34 @@
                 <el-button size="small" text @click="store.selectAll">全选</el-button>
                 <el-button size="small" text @click="store.deselectAll">取消</el-button>
                 <el-button size="small" text @click="store.invertSelection">反选</el-button>
+                <el-button size="small" text type="warning" :disabled="goodsReviewStats.failed === 0" @click="jumpToNextReviewItem('failed')">
+                  下个失败
+                </el-button>
                 <el-button size="small" text type="danger" @click="handleBatchDelete" :disabled="store.selectedItems.length === 0">
                   🗑️ 批量删除({{ store.selectedItems.length }})
                 </el-button>
               </div>
             </div>
+            <div class="goods-filter-bar">
+              <el-segmented v-model="goodsStatusFilter" :options="goodsFilterOptions" />
+              <div class="goods-filter-row">
+                <el-input
+                  v-model="goodsKeyword"
+                  clearable
+                  placeholder="搜索文件名、错误原因"
+                />
+                <el-checkbox v-model="goodsSelectedOnly">只看勾选</el-checkbox>
+              </div>
+              <div class="goods-filter-summary">
+                当前显示 {{ visibleGoodsList.length }} / {{ goodsReviewStats.total }}
+              </div>
+            </div>
             <div class="goods-list">
               <div
-                v-for="item in store.goodsList"
+                v-for="item in visibleGoodsList"
                 :key="item.id"
                 class="goods-item"
-                :class="{ selected: item.selected, failed: isFailedStatus(item.status) }"
+                :class="{ selected: item.selected, failed: isFailedStatus(item.status), active: previewItem?.id === item.id }"
                 @click="handlePreviewItem(item)"
               >
                 <el-checkbox v-model="item.selected" @click.stop />
@@ -100,6 +161,11 @@
                     导入文件夹
                   </el-button>
                 </div>
+              </div>
+              <div v-else-if="visibleGoodsList.length === 0" class="empty-state compact">
+                <el-icon :size="42"><Search /></el-icon>
+                <p>没有符合当前筛选条件的素材</p>
+                <el-button size="small" @click="resetGoodsFilters">清空筛选</el-button>
               </div>
             </div>
           </div>
@@ -222,6 +288,24 @@
               </div>
               <div v-if="previewItem.error" class="error-message">
                 <el-alert :title="previewItem.error" type="error" show-icon :closable="false" />
+                <div v-if="previewErrorDiagnosis" class="error-diagnosis-card">
+                  <strong>{{ previewErrorDiagnosis.title }}</strong>
+                  <p>{{ previewErrorDiagnosis.summary }}</p>
+                  <ul>
+                    <li v-for="action in previewErrorDiagnosis.actions" :key="action">{{ action }}</li>
+                  </ul>
+                </div>
+              </div>
+              <div v-if="previewItem.qualityStatus || previewItem.visualQualityStatus" class="quality-summary">
+                <el-tag v-if="previewItem.qualityStatus" :type="previewItem.qualityNeedsReview ? 'warning' : 'success'">
+                  OCR {{ previewItem.qualityScore ?? '-' }} 分
+                </el-tag>
+                <el-tag v-if="previewItem.visualQualityStatus" :type="previewItem.visualQualityNeedsReview ? 'warning' : 'success'">
+                  视觉 {{ previewItem.visualQualityScore ?? '-' }} 分
+                </el-tag>
+                <span v-if="previewItem.visualQualityWarnings?.length">
+                  {{ previewItem.visualQualityWarnings.join('、') }}
+                </span>
               </div>
               <div class="review-toolbar">
                 <el-button type="success" :disabled="!previewItem.generatedImage" @click="markPreviewHistory('satisfied')">
@@ -302,6 +386,10 @@
               <el-icon><VideoPause /></el-icon>
               停止生成
             </el-button>
+            <el-button size="large" @click="handleRecoverInterrupted" :disabled="resumeSummary.interrupted === 0 || store.isGenerating">
+              <el-icon><Refresh /></el-icon>
+              恢复中断({{ resumeSummary.interrupted }})
+            </el-button>
             <el-button type="success" size="large" @click="handleExport" :disabled="store.completedCount === 0">
               <el-icon><Download /></el-icon>
               AI教辅图导出
@@ -360,101 +448,49 @@
         <XiaohongshuWorkshop @use-prompt="handleToolboxUsePrompt" />
       </div>
 
+      <!-- ==================== Tab: 文生图 ==================== -->
+      <div v-show="activeTab === 'textImage'" class="tab-content tab-text-image">
+        <TextToImageWorkbench
+          :has-api-token="hasConfiguredApiToken()"
+          :redo-request="textImageRedoRequest"
+          @history-record="handleGeneratedHistoryRecord"
+          @open-settings="showSettings = true"
+          @use-prompt="handleToolboxUsePrompt"
+        />
+      </div>
+
       <!-- ==================== Tab: 二创 ==================== -->
       <div v-show="activeTab === 'recreate'" class="tab-content tab-recreate">
         <RewritePage />
       </div>
 
+      <!-- ==================== Tab: 图文分离 ==================== -->
+      <div v-show="activeTab === 'separation'" class="tab-content tab-separation">
+        <GraphicTextSeparationWorkbench />
+      </div>
+
       <!-- ==================== Tab: 模板库 ==================== -->
       <div v-show="activeTab === 'templates'" class="tab-content tab-templates">
-        <div class="placeholder-page">
-          <el-icon :size="80" color="#1D4ED8"><Grid /></el-icon>
-          <h2>模板库</h2>
-          <p>精选AI绘图提示词模板</p>
-          <div class="placeholder-features">
-            <el-card shadow="hover">
-              <el-icon :size="32" color="#1D4ED8"><Document /></el-icon>
-              <h3>提示词模板</h3>
-              <p>按学科/年级分类的提示词</p>
-            </el-card>
-            <el-card shadow="hover">
-              <el-icon :size="32" color="#1D4ED8"><Picture /></el-icon>
-              <h3>图片模板</h3>
-              <p>常见教辅图片版式模板</p>
-            </el-card>
-            <el-card shadow="hover">
-              <el-icon :size="32" color="#1D4ED8"><Collection /></el-icon>
-              <h3>模板分享</h3>
-              <p>社区优秀模板共享平台</p>
-            </el-card>
-          </div>
-        </div>
+        <TemplateLibrary @use-prompt="handleToolboxUsePrompt" />
       </div>
 
       <!-- ==================== Tab: 作品集 ==================== -->
       <div v-show="activeTab === 'projects'" class="tab-content tab-projects">
-        <div class="projects-page">
-          <div class="projects-page-header">
-            <h2><el-icon><Folder /></el-icon> 我的作品集</h2>
-            <span class="projects-count">共 {{ projects.length }} 个作品</span>
-          </div>
-          <div class="projects-grid" v-if="projects.length > 0">
-            <div v-for="project in projects" :key="project.id" class="project-card">
-              <div class="project-preview">
-                <img :src="getProjectPreviewSrc(project)" :alt="project.name" />
-              </div>
-              <div class="project-info">
-                <h4>{{ project.name }}</h4>
-                <p class="project-date">{{ new Date(project.createdAt).toLocaleDateString() }}</p>
-                <p class="project-prompt" v-if="project.prompt">{{ project.prompt }}</p>
-              </div>
-              <div class="project-actions">
-                <el-button size="small" @click="useProject(project)">使用</el-button>
-                <el-button size="small" type="danger" @click="deleteProject(project.id)">删除</el-button>
-              </div>
-            </div>
-          </div>
-          <div v-else class="empty-projects">
-            <el-icon :size="48"><FolderOpened /></el-icon>
-            <p>暂无作品，生成图片后点击"保存到作品集"</p>
-          </div>
-        </div>
+        <ProjectsPage
+          :projects="projects"
+          @use="useProject"
+          @delete="deleteProject"
+          @refresh="loadProjects"
+        />
       </div>
 
       <!-- ==================== Tab: 百宝箱 ==================== -->
       <div v-show="activeTab === 'toolbox'" class="tab-content tab-toolbox">
-        <div class="placeholder-page">
-          <el-icon :size="80" color="#10b981"><Box /></el-icon>
-          <h2>百宝箱</h2>
-          <p>实用工具集合</p>
-          <div class="placeholder-features">
-            <el-card shadow="hover" @click="showToolbox = true" class="toolbox-card">
-              <el-icon :size="32" color="#10b981"><Box /></el-icon>
-              <h3>工具箱</h3>
-              <p>打开完整工具箱面板</p>
-            </el-card>
-            <el-card shadow="hover" @click="handleWordPdfConvert" class="toolbox-card">
-              <el-icon :size="32" color="#10b981"><Document /></el-icon>
-              <h3>Word/PDF转图片</h3>
-              <p>文档格式转换工具</p>
-            </el-card>
-            <el-card shadow="hover" @click="handleNetworkDiagnosis" class="toolbox-card">
-              <el-icon :size="32" color="#10b981"><Connection /></el-icon>
-              <h3>网络诊断</h3>
-              <p>检测API连接状态</p>
-            </el-card>
-            <el-card shadow="hover" @click="handleModifyCover" class="toolbox-card">
-              <el-icon :size="32" color="#10b981"><Edit /></el-icon>
-              <h3>修改主图</h3>
-              <p>编辑商品主图</p>
-            </el-card>
-            <el-card shadow="hover" @click="showSettings = true" class="toolbox-card">
-              <el-icon :size="32" color="#10b981"><Setting /></el-icon>
-              <h3>API设置</h3>
-              <p>配置API密钥参数</p>
-            </el-card>
-          </div>
-        </div>
+        <ToolboxPage
+          @open-toolbox="showToolbox = true"
+          @network-diagnosis="handleNetworkDiagnosis"
+          @open-settings="showSettings = true"
+        />
       </div>
 
       <!-- ==================== AI助手侧边栏 ==================== -->
@@ -523,9 +559,72 @@
     <!-- 百宝箱工具箱对话框 -->
     <ToolboxDialog v-model="showToolbox" @use-prompt="handleToolboxUsePrompt" />
 
+    <CreativeSuiteDialog
+      v-model="showCreativeSuite"
+      @use-prompt="handleToolboxUsePrompt"
+      @open-text-image="activeTab = 'textImage'"
+    />
+
+    <PlatformCenterDialog v-model="showPlatformCenter" />
+
+    <!-- 统一历史记录 -->
+    <UnifiedHistoryDialog
+      v-model:visible="showUnifiedHistory"
+      :records="taskHistory"
+      @preview="selectHistoryRecord"
+      @open="openRecordFolder"
+      @mark="markHistory"
+      @reuse="reuseHistoryPrompt"
+      @redo="redoHistoryRecord"
+      @delete="deleteHistoryRecord"
+      @clear="clearHistoryRecords"
+    />
+
     <!-- 图片预览对话框 -->
     <el-dialog v-model="imagePreviewVisible" title="图片预览" width="80%" destroy-on-close>
       <img :src="previewImageUrl" style="width: 100%; object-fit: contain;" />
+    </el-dialog>
+
+    <!-- 更新提示对话框 -->
+    <el-dialog v-model="showUpdateDialog" title="软件更新" width="480px" :close-on-click-modal="false">
+      <div v-if="!updateState.downloading && !updateState.downloaded">
+        <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px;">
+          <template #title>
+            发现新版本 v{{ updateState.latestVersion }}
+          </template>
+        </el-alert>
+        <p style="color: #606266; margin-bottom: 16px;">
+          当前版本：v26.06.29<br/>
+          最新版本：v{{ updateState.latestVersion }}<br/>
+          <span v-if="updateState.releaseDate">发布日期：{{ updateState.releaseDate }}</span>
+        </p>
+        <div v-if="updateState.releaseNotes" style="background: #f5f7fa; padding: 12px; border-radius: 8px; margin-bottom: 16px; max-height: 200px; overflow-y: auto;">
+          <h4 style="margin: 0 0 8px;">更新内容：</h4>
+          <div v-html="updateState.releaseNotes"></div>
+        </div>
+      </div>
+      <div v-else-if="updateState.downloading" style="text-align: center; padding: 20px;">
+        <el-progress :percentage="updateState.progress" :stroke-width="12" style="margin-bottom: 16px;" />
+        <p style="color: #606266;">正在下载更新... {{ updateState.progress }}%</p>
+        <p v-if="updateState.downloadSpeed" style="color: #909399; font-size: 12px;">
+          下载速度：{{ updateState.downloadSpeed }}
+        </p>
+      </div>
+      <div v-else-if="updateState.downloaded" style="text-align: center; padding: 20px;">
+        <el-icon :size="48" color="#67c23a"><CircleCheck /></el-icon>
+        <p style="color: #606266; margin-top: 12px;">更新已下载完成，点击"立即安装"重启应用。</p>
+      </div>
+      <template #footer>
+        <el-button @click="showUpdateDialog = false" :disabled="updateState.downloading">
+          {{ updateState.downloaded ? '稍后安装' : '取消' }}
+        </el-button>
+        <el-button v-if="!updateState.downloading && !updateState.downloaded" type="primary" @click="handleDownloadUpdate">
+          下载更新
+        </el-button>
+        <el-button v-if="updateState.downloaded" type="primary" @click="handleInstallUpdate">
+          立即安装
+        </el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -537,26 +636,64 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import SettingsDialog from './components/SettingsDialog.vue'
 import PromptManager from './components/PromptManager.vue'
 import ToolboxDialog from './components/ToolboxDialog.vue'
+import CreativeSuiteDialog from './components/CreativeSuiteDialog.vue'
+import PlatformCenterDialog from './components/PlatformCenterDialog.vue'
 import RewritePage from './components/RewritePage.vue'
 import XiaohongshuWorkshop from './components/XiaohongshuWorkshop.vue'
+import TextToImageWorkbench from './components/TextToImageWorkbench.vue'
+import GraphicTextSeparationWorkbench from './components/GraphicTextSeparationWorkbench.vue'
+import ToolboxPage from './components/ToolboxPage.vue'
+import TemplateLibrary from './components/TemplateLibrary.vue'
+import ProjectsPage from './components/ProjectsPage.vue'
+import UnifiedHistoryDialog from './components/UnifiedHistoryDialog.vue'
 import {
   createTaskRecord,
   upsertTaskRecord,
   markTaskRecord,
+  deleteTaskRecord,
+  clearTaskRecords,
+  createHistoryRedoPayload,
   filterTaskRecords,
   getTaskHistoryStats,
   loadTaskHistory,
   saveTaskHistory
 } from './utils/taskHistory.mjs'
+import {
+  applyQualityResultsToItems,
+  createQualityQueue,
+  summarizeQualityResults
+} from './utils/qualityWorkflow.mjs'
+import { summarizeVisualQuality } from './utils/visualQualityWorkflow.mjs'
+import {
+  createWorkspaceSnapshot,
+  restoreWorkspaceSnapshot
+} from './utils/workspaceSession.mjs'
+import {
+  recoverInterruptedItems,
+  summarizeResumeCandidates
+} from './utils/resumeWorkflow.mjs'
+import { buildPublishPlan } from './utils/publishWorkflow.mjs'
+import {
+  diagnoseGenerationError,
+  formatDiagnosisForLog
+} from './utils/errorDiagnosis.mjs'
+import {
+  filterGoodsForReview,
+  getGoodsReviewStats,
+  getNextReviewItem
+} from './utils/goodsReviewWorkflow.mjs'
 
 const store = useAppStore()
+const WORKSPACE_SNAPSHOT_KEY = 'aiTeachingWorkspaceSnapshot'
 
 // Tab导航配置
 const activeTab = ref('create')
 const tabs = [
   { key: 'create', label: '创作', icon: 'MagicStick' },
   { key: 'xiaohongshu', label: '小红书', icon: 'ChatDotRound' },
+  { key: 'textImage', label: '文生图', icon: 'Picture' },
   { key: 'recreate', label: '二创', icon: 'Edit' },
+  { key: 'separation', label: '图文分离', icon: 'Crop' },
   { key: 'templates', label: '模板库', icon: 'Grid' },
   { key: 'projects', label: '作品集', icon: 'Folder' },
   { key: 'toolbox', label: '百宝箱', icon: 'Box' },
@@ -566,6 +703,9 @@ const tabs = [
 const showSettings = ref(false)
 const showPromptManager = ref(false)
 const showToolbox = ref(false)
+const showCreativeSuite = ref(false)
+const showPlatformCenter = ref(false)
+const showUnifiedHistory = ref(false)
 const logCollapsed = ref(false)
 const logTextarea = ref(null)
 const previewIndex = ref(0)
@@ -577,7 +717,25 @@ const showAiAssistant = ref(false)
 const aiAssistantInput = ref('')
 const taskHistory = ref([])
 const historyFilter = ref('all')
+
+// 更新状态
+const showUpdateDialog = ref(false)
+const updateState = ref({
+  hasUpdate: false,
+  latestVersion: '',
+  releaseDate: '',
+  releaseNotes: '',
+  downloading: false,
+  progress: 0,
+  downloadSpeed: '',
+  downloaded: false
+})
 const importPageRanges = ref('')
+const textImageRedoRequest = ref(null)
+const goodsStatusFilter = ref('all')
+const goodsKeyword = ref('')
+const goodsSelectedOnly = ref(false)
+let workspaceRestoreDone = false
 
 function hasConfiguredApiToken() {
   return Boolean(store.config.api.hasToken || store.config.api.token)
@@ -652,8 +810,41 @@ const previewItem = computed(() => {
   return store.goodsList[previewIndex.value]
 })
 
+const selectedRenderModeLabel = computed(() => {
+  const map = {
+    openaiRedraw: '参考图重绘',
+    faithful: 'OCR 内容保真',
+    twoStage: 'OCR 二段式',
+    strongStyle: '强风格包装'
+  }
+  return map[selectedRenderMode.value] || '生成模式'
+})
+const selectedSizeLabel = computed(() => (
+  store.sizeOptions.find(option => option.value === store.selectedSize)?.label || store.selectedSize || '尺寸'
+))
+const selectedResolutionLabel = computed(() => (
+  store.resolutionOptions.find(option => option.value === store.selectedResolution)?.label || store.selectedResolution || '分辨率'
+))
+const previewErrorDiagnosis = computed(() => (
+  previewItem.value?.error ? diagnoseGenerationError(previewItem.value.error) : null
+))
+const goodsReviewStats = computed(() => getGoodsReviewStats(store.goodsList))
+const visibleGoodsList = computed(() => filterGoodsForReview(store.goodsList, {
+  status: goodsStatusFilter.value,
+  keyword: goodsKeyword.value,
+  selectedOnly: goodsSelectedOnly.value
+}))
+const goodsFilterOptions = computed(() => [
+  { label: `全部 ${goodsReviewStats.value.total}`, value: 'all' },
+  { label: `待生成 ${goodsReviewStats.value.pending}`, value: 'pending' },
+  { label: `生成中 ${goodsReviewStats.value.running}`, value: 'running' },
+  { label: `已完成 ${goodsReviewStats.value.completed}`, value: 'completed' },
+  { label: `失败 ${goodsReviewStats.value.failed}`, value: 'failed' }
+])
+
 const visibleTaskHistory = computed(() => filterTaskRecords(taskHistory.value, historyFilter.value))
 const historyStats = computed(() => getTaskHistoryStats(taskHistory.value))
+const resumeSummary = computed(() => summarizeResumeCandidates(store.goodsList))
 const satisfiedCompletedItems = computed(() => taskHistory.value
   .filter(record => record.reviewStatus === 'satisfied' && record.generatedImage)
   .map((record, index) => ({
@@ -725,6 +916,46 @@ onMounted(() => {
 onMounted(() => {
   loadProjects()
   taskHistory.value = loadTaskHistory(localStorage)
+  restoreWorkspaceSession()
+
+  // 监听更新事件
+  if (window.electronAPI.onUpdateAvailable) {
+    window.electronAPI.onUpdateAvailable((data) => {
+      updateState.value.hasUpdate = true
+      updateState.value.latestVersion = data?.version || ''
+      updateState.value.releaseDate = data?.releaseDate || ''
+      updateState.value.releaseNotes = data?.releaseNotes || ''
+      store.addLog(`[更新] 发现新版本: ${data?.version}`, 'INFO', 'Updater')
+    })
+
+    window.electronAPI.onUpdateDownloadProgress((data) => {
+      updateState.value.downloading = true
+      updateState.value.progress = data?.percent || 0
+      if (data?.bytesPerSecond) {
+        const speed = data.bytesPerSecond
+        if (speed > 1024 * 1024) {
+          updateState.value.downloadSpeed = `${(speed / 1024 / 1024).toFixed(1)} MB/s`
+        } else if (speed > 1024) {
+          updateState.value.downloadSpeed = `${(speed / 1024).toFixed(0)} KB/s`
+        } else {
+          updateState.value.downloadSpeed = `${speed} B/s`
+        }
+      }
+    })
+
+    window.electronAPI.onUpdateDownloaded((data) => {
+      updateState.value.downloading = false
+      updateState.value.downloaded = true
+      updateState.value.latestVersion = data?.version || updateState.value.latestVersion
+      store.addLog(`[更新] 新版本 ${data?.version} 下载完成`, 'INFO', 'Updater')
+      showUpdateDialog.value = true
+    })
+
+    window.electronAPI.onUpdateError((data) => {
+      updateState.value.downloading = false
+      store.addLog(`[更新] 更新失败: ${data?.message}`, 'WARN', 'Updater')
+    })
+  }
 })
 
 onUnmounted(() => {
@@ -745,6 +976,66 @@ async function loadConfig() {
     console.error('加载配置失败:', error)
   }
 }
+
+function saveWorkspaceSession() {
+  if (!workspaceRestoreDone) return
+  try {
+    const snapshot = createWorkspaceSnapshot({
+      goodsList: store.goodsList,
+      promptText: store.promptText,
+      selectedTemplate: store.selectedTemplate,
+      selectedSize: store.selectedSize,
+      selectedResolution: store.selectedResolution,
+      selectedRenderMode: selectedRenderMode.value,
+      currentFolderName: store.currentFolderName,
+      activeTab: activeTab.value
+    })
+    localStorage.setItem(WORKSPACE_SNAPSHOT_KEY, JSON.stringify(snapshot))
+  } catch (error) {
+    console.warn('workspace snapshot save failed', error)
+  }
+}
+
+function restoreWorkspaceSession() {
+  if (workspaceRestoreDone) return
+  try {
+    const snapshot = restoreWorkspaceSnapshot(localStorage.getItem(WORKSPACE_SNAPSHOT_KEY))
+    if (!snapshot) return
+
+    if (snapshot.goodsList.length && store.goodsList.length === 0) {
+      store.goodsList = snapshot.goodsList
+      store.currentFolderName = snapshot.currentFolderName || store.currentFolderName
+      previewIndex.value = 0
+      ElMessage.info('已恢复上次工作现场')
+    }
+    store.promptText = snapshot.promptText || store.promptText
+    store.selectedTemplate = snapshot.selectedTemplate || store.selectedTemplate
+    store.selectedSize = snapshot.selectedSize || store.selectedSize
+    store.selectedResolution = snapshot.selectedResolution || store.selectedResolution
+    selectedRenderMode.value = snapshot.selectedRenderMode || selectedRenderMode.value
+    activeTab.value = snapshot.activeTab || activeTab.value
+  } catch (error) {
+    localStorage.removeItem(WORKSPACE_SNAPSHOT_KEY)
+    console.warn('workspace snapshot restore failed', error)
+  } finally {
+    workspaceRestoreDone = true
+  }
+}
+
+watch(
+  () => ({
+    goodsList: store.goodsList,
+    promptText: store.promptText,
+    selectedTemplate: store.selectedTemplate,
+    selectedSize: store.selectedSize,
+    selectedResolution: store.selectedResolution,
+    selectedRenderMode: selectedRenderMode.value,
+    currentFolderName: store.currentFolderName,
+    activeTab: activeTab.value
+  }),
+  saveWorkspaceSession,
+  { deep: true }
+)
 
 function saveHistory(records) {
   taskHistory.value = records
@@ -771,6 +1062,10 @@ function recordHistoryForItem(item) {
 function recordHistoryForBatch() {
   const finishedItems = store.goodsList.filter(item => item.generatedImage || item.error)
   finishedItems.forEach(recordHistoryForItem)
+}
+
+function handleGeneratedHistoryRecord(record) {
+  saveHistory(upsertTaskRecord(taskHistory.value, record))
 }
 
 function markPreviewHistory(reviewStatus) {
@@ -801,14 +1096,24 @@ async function qualityCheckPreview() {
 
     previewItem.value.qualityScore = result.score
     previewItem.value.qualityNeedsReview = result.needsReview
+    const visualResult = await window.electronAPI.visualQualityCheckImage({
+      imagePath: previewItem.value.generatedImage,
+      targetRatio: store.selectedSize
+    })
+    if (visualResult.success) {
+      previewItem.value.visualQualityScore = visualResult.score
+      previewItem.value.visualQualityNeedsReview = visualResult.needsReview
+      previewItem.value.visualQualityWarnings = visualResult.warnings || []
+      previewItem.value.qualityNeedsReview = Boolean(previewItem.value.qualityNeedsReview || visualResult.needsReview)
+    }
     recordHistoryForItem(previewItem.value)
 
-    if (result.needsReview) {
+    if (previewItem.value.qualityNeedsReview) {
       const record = buildHistoryRecord(previewItem.value)
       saveHistory(markTaskRecord(taskHistory.value, record.id, 'review'))
-      ElMessage.warning(`OCR质检 ${result.score} 分，建议复查文字是否漏改`)
+      ElMessage.warning(`质检需复查：OCR ${result.score} 分，视觉 ${visualResult.success ? visualResult.score : '未完成'} 分`)
     } else {
-      ElMessage.success(`OCR质检 ${result.score} 分，通过`)
+      ElMessage.success(`质检通过：OCR ${result.score} 分，视觉 ${visualResult.success ? visualResult.score : '未完成'} 分`)
     }
   } catch (error) {
     ElMessage.error('OCR质检失败: ' + error.message)
@@ -816,34 +1121,145 @@ async function qualityCheckPreview() {
 }
 
 async function runQualityCheckForCompleted() {
-  const items = store.goodsList
-    .filter(item => item.referenceImage && item.generatedImage)
-    .slice(0, 20)
+  const queue = createQualityQueue(store.goodsList).slice(0, 20)
+  if (!queue.length) return
 
-  for (const item of items) {
+  const results = []
+  const visualResults = []
+  for (const item of queue) {
     try {
       const result = await window.electronAPI.qualityCheckImage({
         sourceImage: item.referenceImage,
         generatedImage: item.generatedImage
       })
-      if (!result.success) continue
-
-      item.qualityScore = result.score
-      item.qualityNeedsReview = result.needsReview
-      recordHistoryForItem(item)
-
-      if (result.needsReview) {
-        const record = buildHistoryRecord(item)
-        saveHistory(markTaskRecord(taskHistory.value, record.id, 'review'))
-      }
+      results.push({
+        id: item.id,
+        title: item.title,
+        score: result.score,
+        needsReview: Boolean(result.needsReview),
+        error: result.success ? '' : (result.error || 'quality check failed')
+      })
     } catch (error) {
+      results.push({
+        id: item.id,
+        title: item.title,
+        error: error.message
+      })
       store.addLog(`[WARN] [Quality] ${item.title} OCR质检失败: ${error.message}`)
     }
+
+    try {
+      const visualResult = await window.electronAPI.visualQualityCheckImage({
+        imagePath: item.generatedImage,
+        targetRatio: store.selectedSize
+      })
+      visualResults.push({
+        id: item.id,
+        title: item.title,
+        score: visualResult.score,
+        needsReview: Boolean(visualResult.needsReview),
+        warnings: visualResult.warnings || [],
+        error: visualResult.success ? '' : (visualResult.error || 'visual quality check failed')
+      })
+    } catch (error) {
+      visualResults.push({
+        id: item.id,
+        title: item.title,
+        error: error.message
+      })
+      store.addLog(`[WARN] [Quality] ${item.title} 视觉质检失败: ${error.message}`)
+    }
   }
+
+  store.goodsList = applyQualityResultsToItems(store.goodsList, results)
+  const visualMap = new Map(visualResults.map(result => [result.id, result]))
+  store.goodsList = store.goodsList.map(item => {
+    const visualResult = visualMap.get(item.id)
+    if (!visualResult) return item
+    return {
+      ...item,
+      visualQualityScore: visualResult.score ?? item.visualQualityScore,
+      visualQualityNeedsReview: Boolean(visualResult.needsReview || visualResult.error),
+      visualQualityWarnings: visualResult.warnings || [],
+      visualQualityStatus: visualResult.error ? 'failed' : (visualResult.needsReview ? 'review' : 'passed'),
+      visualQualityError: visualResult.error || '',
+      qualityNeedsReview: Boolean(item.qualityNeedsReview || visualResult.needsReview || visualResult.error)
+    }
+  })
+  store.goodsList.forEach(item => {
+    if (!item.qualityStatus && !item.visualQualityStatus) return
+    recordHistoryForItem(item)
+    if (item.qualityNeedsReview) {
+      const record = buildHistoryRecord(item)
+      saveHistory(markTaskRecord(taskHistory.value, record.id, 'review'))
+    }
+  })
+
+  const summary = summarizeQualityResults(results)
+  const visualSummary = summarizeVisualQuality(visualResults)
+  store.addLog(`[Quality] OCR质检完成: ${summary.passed} 通过, ${summary.review} 需复查, ${summary.failed} 失败`)
+  store.addLog(`[Quality] 视觉质检完成: ${visualSummary.passed} 通过, ${visualSummary.review} 需复查, ${visualSummary.failed} 失败`)
 }
 
 function markHistory(record, reviewStatus) {
   saveHistory(markTaskRecord(taskHistory.value, record.id, reviewStatus))
+}
+
+function deleteHistoryRecord(record) {
+  saveHistory(deleteTaskRecord(taskHistory.value, record.id))
+  ElMessage.success('历史记录已删除')
+}
+
+async function clearHistoryRecords() {
+  try {
+    await ElMessageBox.confirm(
+      '确定要清空所有统一历史记录吗？这个操作不会删除本地图片文件。',
+      '清空历史记录',
+      {
+        type: 'warning',
+        confirmButtonText: '清空',
+        cancelButtonText: '取消'
+      }
+    )
+    saveHistory(clearTaskRecords())
+    ElMessage.success('历史记录已清空')
+  } catch {
+    // 用户取消，无需提示。
+  }
+}
+
+function reuseHistoryPrompt(record) {
+  if (!record?.prompt) {
+    ElMessage.warning('这条历史没有可复用提示词')
+    return
+  }
+  store.promptText = record.prompt
+  activeTab.value = 'create'
+  showUnifiedHistory.value = false
+  ElMessage.success('提示词已回填到创作页')
+}
+
+function redoHistoryRecord(record) {
+  const payload = createHistoryRedoPayload(record)
+  if (!payload?.prompt) {
+    ElMessage.warning('这条历史缺少可重做的提示词')
+    return
+  }
+
+  showUnifiedHistory.value = false
+  if (payload.type === 'textToImage') {
+    textImageRedoRequest.value = {
+      ...payload,
+      requestedAt: Date.now()
+    }
+    activeTab.value = 'textImage'
+    ElMessage.info('已回到文生图页，正在重做')
+    return
+  }
+
+  store.promptText = payload.prompt
+  activeTab.value = 'create'
+  ElMessage.success('已回填到创作页，可重新生成')
 }
 
 function selectHistoryRecord(record) {
@@ -1015,6 +1431,18 @@ async function handleImportMaterials() {
 // 详细的错误提示函数
 function showErrorWithDetails(error, context = '') {
   const message = error.message || error.error || String(error)
+  const diagnosis = diagnoseGenerationError(error)
+  const actionText = diagnosis.actions.length ? `建议：${diagnosis.actions.join('；')}` : ''
+
+  ElMessage({
+    message: `${diagnosis.title}${context ? ' (' + context + ')' : ''}: ${diagnosis.summary}${actionText ? '。' + actionText : ''}`,
+    type: 'error',
+    duration: 8000,
+    showClose: true
+  })
+
+  store.addLog(`[错误诊断] ${formatDiagnosisForLog(diagnosis, context || '生成任务')}`, 'ERROR')
+  return
 
   // 解析常见错误类型
   let errorType = '未知错误'
@@ -1201,6 +1629,19 @@ async function stopGenerate() {
   ElMessage.info('已请求停止生成，队列会尽快中断')
 }
 
+function handleRecoverInterrupted() {
+  const interrupted = resumeSummary.value.interrupted
+  if (interrupted === 0) {
+    ElMessage.info('没有需要恢复的中断任务')
+    return
+  }
+  store.goodsList = recoverInterruptedItems(store.goodsList)
+  store.progress = store.totalCount > 0
+    ? Math.round((store.completedCount / store.totalCount) * 100)
+    : 0
+  ElMessage.success(`已恢复 ${interrupted} 个中断任务为待生成，失败项不会自动重试`)
+}
+
 // 一键分发准备
 async function handleDistribute() {
   const completed = store.goodsList.filter(item => isCompletedStatus(item.status) && item.generatedImage)
@@ -1237,14 +1678,38 @@ async function handleDistribute() {
 function buildXiaohongshuPublishText(items) {
   const folderName = store.currentFolderName || 'AI教辅资料'
   const count = items.length
+  const plan = buildPublishPlan({
+    title: folderName,
+    count,
+    grade: inferPublishGrade(folderName),
+    subject: inferPublishSubject(folderName)
+  })
+
   return [
-    `${folderName}｜可直接打印的教辅资料`,
+    '【标题备选】',
+    ...plan.titles.map((title, index) => `${index + 1}. ${title}`),
     '',
-    `这套资料一共整理了 ${count} 张图，适合预习、复习、错题巩固和家长辅导。`,
-    '已按手机阅读场景重新排版，重点更清楚，打印和收藏都方便。',
+    '【正文模板】',
+    plan.texts[0],
     '',
-    '#教辅资料 #小学资料 #学习资料 #小红书教辅 #家长辅导 #AI教辅'
+    '【标签】',
+    plan.tags.join(' '),
+    '',
+    '【发布时间】',
+    plan.suggestedTime
   ].join('\n')
+}
+
+function inferPublishGrade(text) {
+  const value = String(text || '')
+  const match = value.match(/([一二三四五六七八九]|[1-9])年级/)
+  return match ? `${match[1]}年级` : '小学'
+}
+
+function inferPublishSubject(text) {
+  const value = String(text || '')
+  const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '道法']
+  return subjects.find(subject => value.includes(subject)) || '学习'
 }
 
 // 一键清空分发
@@ -1484,6 +1949,8 @@ async function handleMagicWand() {
 // 百宝箱应用提示词回调
 function handleToolboxUsePrompt(prompt) {
   store.promptText = prompt
+  activeTab.value = 'create'
+  ElMessage.success('提示词已填入创作页')
 }
 
 // 网络诊断
@@ -1508,6 +1975,30 @@ async function handleNetworkDiagnosis() {
   } catch (error) {
     loading.close()
     showErrorWithDetails(error, '网络诊断')
+  }
+}
+
+// 更新相关
+async function handleDownloadUpdate() {
+  updateState.value.downloading = true
+  updateState.value.progress = 0
+  try {
+    const result = await window.electronAPI.downloadUpdate()
+    if (!result?.success) {
+      ElMessage.error(result?.error || '下载更新失败')
+      updateState.value.downloading = false
+    }
+  } catch (error) {
+    ElMessage.error('下载更新失败: ' + error.message)
+    updateState.value.downloading = false
+  }
+}
+
+async function handleInstallUpdate() {
+  try {
+    await window.electronAPI.installUpdate()
+  } catch (error) {
+    ElMessage.error('安装更新失败: ' + error.message)
   }
 }
 
@@ -1543,6 +2034,27 @@ async function handleAiAssistantSend() {
 // 预览相关
 function handlePreviewItem(item) {
   previewIndex.value = store.goodsList.indexOf(item)
+}
+
+function resetGoodsFilters() {
+  goodsStatusFilter.value = 'all'
+  goodsKeyword.value = ''
+  goodsSelectedOnly.value = false
+}
+
+function jumpToNextReviewItem(status = goodsStatusFilter.value) {
+  const currentId = previewItem.value?.id
+  const nextItem = getNextReviewItem(store.goodsList, currentId, {
+    status,
+    keyword: goodsKeyword.value,
+    selectedOnly: goodsSelectedOnly.value
+  })
+  if (!nextItem) {
+    ElMessage.info('没有符合条件的素材')
+    return
+  }
+  handlePreviewItem(nextItem)
+  goodsStatusFilter.value = status || 'all'
 }
 
 function prevPreview() {
@@ -1755,10 +2267,12 @@ $primary-bg: #EFF6FF;
   background: white;
   flex-shrink: 0;
   min-height: 0;
+  overflow-y: auto; /* 让左侧面板可以整体滚动 */
 }
 
 .goods-list-panel {
-  flex: 1;
+  flex: 1 1 auto; /* 让它可以根据内容自动伸缩,但至少占用最小空间 */
+  min-height: 300px; /* 保证商品列表有足够的高度 */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1788,6 +2302,7 @@ $primary-bg: #EFF6FF;
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+  min-height: 0; /* 修复滚动问题 */
 
   // 自定义滚动条
   &::-webkit-scrollbar {
@@ -1873,6 +2388,11 @@ $primary-bg: #EFF6FF;
   height: 200px;
   color: #909399;
 
+  &.compact {
+    height: 170px;
+    padding: 18px;
+  }
+
   p {
     margin-top: 12px;
   }
@@ -1885,7 +2405,8 @@ $primary-bg: #EFF6FF;
 }
 
 .prompt-panel {
-  height: 280px;
+  height: 320px; /* 增加高度让提示词设置更舒适 */
+  flex-shrink: 0; /* 不允许被压缩 */
   display: flex;
   flex-direction: column;
   background: #fafafa;
@@ -1897,7 +2418,8 @@ $primary-bg: #EFF6FF;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: hidden;
+  overflow-y: auto; /* 让提示词内容可以滚动 */
+  min-height: 0; /* 修复滚动问题 */
 
   .template-select {
     width: 100%;
@@ -2062,6 +2584,39 @@ $primary-bg: #EFF6FF;
 
 .error-message {
   margin-top: 16px;
+}
+
+.error-diagnosis-card {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: #7f1d1d;
+
+  strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+
+  p {
+    margin: 0 0 8px;
+    color: #991b1b;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+
+  li {
+    margin: 3px 0;
+    color: #7f1d1d;
+    font-size: 13px;
+  }
 }
 
 .no-preview {
@@ -2652,9 +3207,105 @@ $primary-bg: #EFF6FF;
 .tab-create {
   display: grid;
   grid-template-columns: minmax(430px, 32vw) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 14px;
   padding: 14px;
+}
+
+.create-status-strip {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 68px;
+  padding: 12px 16px;
+  border: 1px solid #d9e3ef;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(16, 33, 59, 0.05);
+}
+
+.status-meta {
+  min-width: 0;
+
+  strong,
+  span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    color: #10213b;
+    font-size: 17px;
+    font-weight: 800;
+  }
+
+  span {
+    margin-top: 4px;
+    color: #64748b;
+    font-size: 13px;
+  }
+}
+
+.status-chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(70px, auto));
+  gap: 8px;
+}
+
+.status-chip {
+  min-width: 72px;
+  padding: 8px 10px;
+  border: 1px solid #d9e3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+
+  &:hover,
+  &.active {
+    border-color: #2f65b4;
+    box-shadow: 0 6px 16px rgba(47, 101, 180, 0.13);
+    transform: translateY(-1px);
+  }
+
+  strong,
+  span {
+    display: block;
+  }
+
+  strong {
+    color: #173a6a;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  span {
+    margin-top: 5px;
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  &.success strong {
+    color: #15803d;
+  }
+
+  &.danger strong {
+    color: #dc2626;
+  }
+}
+
+.status-mode {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 360px;
 }
 
 .left-panel,
@@ -2669,19 +3320,20 @@ $primary-bg: #EFF6FF;
 .left-panel {
   width: auto;
   grid-column: 1;
-  grid-row: 1;
-  overflow: hidden;
+  grid-row: 2;
+  overflow-y: auto; /* 保持滚动功能 */
+  overflow-x: hidden;
 }
 
 .right-panel {
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 2;
   overflow-y: auto;
 }
 
 .create-bottom-bar {
   grid-column: 1 / -1;
-  grid-row: 2;
+  grid-row: 3;
   position: sticky;
   bottom: 0;
   padding: 12px 14px;
@@ -2705,6 +3357,30 @@ $primary-bg: #EFF6FF;
   padding: 0;
 }
 
+.goods-filter-bar {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #edf1f6;
+  background: #ffffff;
+
+  .el-segmented {
+    width: 100%;
+  }
+}
+
+.goods-filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.goods-filter-summary {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .goods-item {
   min-height: 88px;
   padding: 14px 16px;
@@ -2720,6 +3396,11 @@ $primary-bg: #EFF6FF;
     border: 0;
     border-bottom: 1px solid #cfe0f7;
     box-shadow: inset 4px 0 0 #2f65b4;
+  }
+
+  &.active {
+    outline: 2px solid rgba(47, 101, 180, 0.35);
+    outline-offset: -2px;
   }
 
   &.failed {
@@ -2821,6 +3502,20 @@ $primary-bg: #EFF6FF;
   border: 1px solid #dce5f0;
   border-radius: 10px;
   background: #ffffff;
+}
+
+.quality-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #dce5f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #53647c;
+  font-size: 13px;
 }
 
 .history-panel {
@@ -2967,6 +3662,20 @@ $primary-bg: #EFF6FF;
 @media (max-width: 1200px) {
   .tab-create {
     grid-template-columns: 380px minmax(0, 1fr);
+  }
+
+  .create-status-strip {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .status-chips {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .status-mode {
+    justify-content: flex-start;
+    max-width: none;
   }
 
   .header-tabs .tab-btn {

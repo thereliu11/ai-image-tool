@@ -1,0 +1,99 @@
+<h2>第二阶段：图文分离编辑器做成哪种形态？</h2>
+<p class="subtitle">请重点看工作流是否顺手：导入素材 → OCR 分层 → 调整/修补 → 导出 PPT/Word/图片。点击你更喜欢的方案。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. 百宝箱弹窗增强版</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:1fr;gap:10px">
+            <div class="mock-nav">OCR导出 | AI擦除 | 字体管理 | 导出</div>
+            <div class="placeholder" style="height:210px">单图预览 + 简单按钮</div>
+            <div style="display:flex;gap:8px">
+              <button class="mock-button">去字</button>
+              <button class="mock-button">导出PPT</button>
+              <button class="mock-button">上传字体</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 轻量补强</h3>
+      <p>开发最快，但还是工具集合，不像真正的图文分离工作台。适合临时处理，不适合精修。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 独立图文分离工作台（推荐）</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:220px 1fr 260px;gap:10px">
+            <div class="mock-sidebar">
+              页面列表<br><br>
+              page_001 完成<br>
+              page_002 待修<br>
+              page_003 待导出
+            </div>
+            <div class="placeholder" style="height:250px">
+              中央画布<br>
+              原图底图 + OCR文字框 + 遮罩修补区域
+            </div>
+            <div class="mock-sidebar">
+              图层面板<br><br>
+              文本层<br>
+              遮罩层<br>
+              字体/字号/颜色<br>
+              导出设置
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 独立工作台</h3>
+      <p>最贴近文档和群友工具：有页面列表、中央画布、右侧图层/字体/导出设置。第一版可控，后续能继续扩展。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. 专业编辑器重构版</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:80px 180px 1fr 300px;gap:8px">
+            <div class="mock-sidebar">工具栏<br>选区<br>画笔<br>文字<br>吸色</div>
+            <div class="mock-sidebar">资源<br>页面<br>历史</div>
+            <div class="placeholder" style="height:250px">完整类PS画布</div>
+            <div class="mock-sidebar">属性<br>图层<br>批处理<br>导出</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 专业编辑器</h3>
+      <p>上限最高，但第二阶段风险最大，容易拖慢并影响主应用。更适合作为第三阶段。</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>我推荐 B 的原因</h4>
+    <ul>
+      <li>能覆盖“区域调整、文字框编辑、字体替换、导出PPT”的核心闭环。</li>
+      <li>不需要重构整套应用，只新增一个清晰页面和少量 IPC。</li>
+      <li>后续可以逐步升级到专业编辑器。</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>第二阶段暂不做满的部分</h4>
+    <ul>
+      <li>不做复杂滤镜和类 Photoshop 级别历史栈。</li>
+      <li>不做像素级智能抠图，只做矩形/画笔遮罩和文本层编辑。</li>
+      <li>批量自动精修先保守处理，避免误改教育内容。</li>
+    </ul>
+  </div>
+</div>

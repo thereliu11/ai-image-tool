@@ -1,8 +1,17 @@
 {
     "appId": "com.ai-teaching.tool",
-    "productName": "AI教辅作图工具",
+    "productName": "智绘AI",
     "asar": true,
     "electronVersion": "31.7.7",
+    "electronDist": "node_modules/electron/dist",
+    "publish": [
+        {
+            "provider": "github",
+            "owner": "thereliu11",
+            "repo": "AI教辅作图工具",
+            "releaseType": "release"
+        }
+    ],
     "directories": {
         "output": "release"
     },
@@ -11,10 +20,14 @@
         "src/preload/**/*",
         "src/shared/**/*",
         "dist/renderer/**/*",
-        "assets/**/*"
+        "assets/**/*",
+        "package.json"
     ],
     "win": {
-        "target": ["nsis", "portable"],
+        "target": [
+            "nsis",
+            "portable"
+        ],
         "icon": "assets/icon.png"
     },
     "nsis": {
@@ -22,7 +35,7 @@
         "allowToChangeInstallationDirectory": true,
         "createDesktopShortcut": true,
         "createStartMenuShortcut": true,
-        "shortcutName": "AI教辅作图工具"
+        "shortcutName": "智绘AI"
     },
     "portable": {
         "artifactName": "${productName}-${version}-portable.exe"

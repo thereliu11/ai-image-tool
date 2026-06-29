@@ -1,15 +1,15 @@
 {
   "name": "ai-image-tool",
-  "version": "0.0.9",
-  "description": "AI教辅作图工具 - 批量 AI 教辅图片重绘桌面端应用",
-  "author": "AI教辅作图团队",
+  "version": "26.06.30",
+  "description": "智绘AI - 批量 AI 教辅图片重绘桌面端应用",
+  "author": "智绘AI团队",
   "main": "src/main/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build:renderer": "vite build",
     "build": "npm run build:renderer && node scripts/build.js",
     "preview": "vite preview",
-    "test": "node tests/page-range.test.mjs && node tests/task-history.test.mjs && node tests/batch-controls.test.mjs"
+    "test": "node tests/page-range.test.mjs && node tests/task-history.test.mjs && node tests/batch-controls.test.mjs && node tests/image-size-spec.test.mjs && node tests/image-split-workflow.test.mjs && node tests/feature-catalog.test.mjs && node tests/feishu-upload-workflow.test.mjs && node tests/xhs-goods-download-workflow.test.mjs && node tests/rewrite-workflow.test.mjs && node tests/xhs-workflow.test.mjs && node tests/separation-workspace.test.mjs && node tests/text-to-image-workflow.test.mjs && node tests/layout-template-workflow.test.mjs && node tests/async-task-polling.test.mjs && node tests/quality-workflow.test.mjs && node tests/visual-quality-workflow.test.mjs && node tests/workspace-session.test.mjs && node tests/resume-workflow.test.mjs && node tests/publish-workflow.test.mjs && node tests/platform-workflow.test.mjs && node tests/creative-suite-workflow.test.mjs && node tests/toolbox-advanced-workflow.test.mjs && node tests/video-filter-plan.test.mjs && node tests/ffmpeg-resolver.test.mjs && node tests/recognition-regions.test.mjs && node tests/separation-region-workflow.test.mjs && node tests/error-diagnosis.test.mjs && node tests/goods-review-workflow.test.mjs && node tests/build-cleanup.test.mjs"
   },
   "dependencies": {
     "axios": "^1.7.0",
@@ -29,8 +29,8 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
     "concurrently": "^8.2.2",
-    "electron": "^31.7.7",
-    "electron-builder": "^24.13.3",
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3",
     "element-plus": "^2.7.0",
     "pinia": "^2.1.7",
     "sass": "^1.72.0",

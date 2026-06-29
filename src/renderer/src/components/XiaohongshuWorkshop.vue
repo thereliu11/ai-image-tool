@@ -2,13 +2,20 @@
   <div class="xhs-workshop">
     <header class="workshop-header">
       <div>
-        <h2>文生图工作台</h2>
-        <p>把教辅资料需求整理成可直接生图的结构化提示词。</p>
+        <p class="eyebrow">小红书图文</p>
+        <h2>从教辅资料生成图文卡片方案</h2>
+        <p>先生成结构化提示词和卡片规划，再送到创作页使用当前批量生图链路。</p>
       </div>
-      <el-button type="primary" @click="buildPrompt">
-        <el-icon><MagicStick /></el-icon>
-        生成提示词
-      </el-button>
+      <div class="header-actions">
+        <el-button @click="planCards">
+          <el-icon><Collection /></el-icon>
+          规划卡片
+        </el-button>
+        <el-button type="primary" @click="buildPrompt">
+          <el-icon><MagicStick /></el-icon>
+          生成提示词
+        </el-button>
+      </div>
     </header>
 
     <section class="workbench-grid">
@@ -19,8 +26,9 @@
               <el-select v-model="form.template">
                 <el-option label="资料包封面" value="cover" />
                 <el-option label="教辅资料页" value="material" />
-                <el-option label="错题本" value="mistake" />
+                <el-option label="错题本订正页" value="mistake" />
                 <el-option label="知识卡片" value="card" />
+                <el-option label="学霸笔记" value="note" />
               </el-select>
             </el-form-item>
             <el-form-item label="风格">
@@ -43,6 +51,7 @@
                 <el-option label="2:3 竖图" value="2:3" />
                 <el-option label="3:4 小红书竖版" value="3:4" />
                 <el-option label="1:1 方图" value="1:1" />
+                <el-option label="9:16 长图" value="9:16" />
               </el-select>
             </el-form-item>
             <el-form-item label="质量">
@@ -64,18 +73,21 @@
             <el-input
               v-model="form.points"
               type="textarea"
-              :rows="6"
-              placeholder="每行一个要点，例如：图形面积、和差倍问题、单位换算、答题规范"
+              :rows="7"
+              placeholder="每行一个要点，例如：图形面积、和差倍问题、单位换算"
             />
+          </el-form-item>
+          <el-form-item label="卡片数量">
+            <el-input-number v-model="cardCount" :min="1" :max="20" />
           </el-form-item>
         </el-form>
       </div>
 
       <div class="preview-panel">
-        <div class="mock-canvas" :class="form.template">
+        <div class="mock-canvas">
           <div class="mock-badge">{{ form.grade }} · {{ form.subject }}</div>
           <h3>{{ form.title || '教辅资料标题' }}</h3>
-          <p>{{ form.subtitle || '副标题/卖点会展示在这里' }}</p>
+          <p>{{ form.subtitle || '副标题/卖点展示在这里' }}</p>
           <div class="mock-lines">
             <span v-for="point in previewPoints" :key="point">{{ point }}</span>
           </div>
@@ -83,79 +95,110 @@
 
         <div class="prompt-result">
           <div class="result-header">
-            <strong>生成提示词</strong>
+            <strong>结构化提示词</strong>
             <el-button size="small" type="success" :disabled="!finalPrompt" @click="usePrompt">
               送去创作页
             </el-button>
           </div>
-          <el-input v-model="finalPrompt" type="textarea" :rows="10" />
+          <el-input v-model="finalPrompt" type="textarea" :rows="13" />
         </div>
       </div>
+    </section>
+
+    <section class="card-section">
+      <div class="card-section-head">
+        <div>
+          <h3>图文卡片</h3>
+          <p>共 {{ cardStats.total }} 张，待生成 {{ cardStats.pending }}，生成中 {{ cardStats.running }}，已完成 {{ cardStats.completed }}，失败 {{ cardStats.failed }}</p>
+        </div>
+        <el-button :disabled="!cards.length" @click="prepareBatchPrompt">使用当前卡片提示词</el-button>
+      </div>
+      <div class="card-grid" v-if="cards.length">
+        <article v-for="card in cards" :key="card.id" class="xhs-card">
+          <span>{{ card.subtitle }}</span>
+          <el-input v-model="card.title" />
+          <el-input v-model="card.pointsText" type="textarea" :rows="4" />
+          <el-tag type="info">{{ card.status }}</el-tag>
+        </article>
+      </div>
+      <el-empty v-else description="点击“规划卡片”生成图文结构" />
     </section>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { buildXhsPrompt, createXhsCards, summarizeXhsCards } from '../utils/xhsWorkflow.mjs'
 
 const emit = defineEmits(['use-prompt'])
 
-const styles = ['清爽教辅风', '小红书爆款风', '低年级童趣风', '学霸笔记风', '高级极简风', '错题本订正风', '试卷封套风', '知识卡片风']
+const styles = ['清爽重点笔记风', '小红书爆款风', '低年级童趣风', '学霸笔记风', '高级极简风', '手账插画风', '试卷封套风', '知识卡片风']
 const grades = ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级', '七年级', '八年级', '九年级', '高中']
 const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '道法']
 
-const form = ref({
+const form = reactive({
   template: 'cover',
   style: '小红书爆款风',
   grade: '四年级',
   subject: '数学',
-  ratio: '2:3',
+  ratio: '3:4',
   quality: 'medium',
   title: '四年级下册数学易错应用题',
   subtitle: '抓住易错点，提升解题能力',
   points: '先画图整理，再列式计算\n和差倍问题\n长方形面积应用\n单位换算与答题规范'
 })
 
+const cardCount = ref(6)
 const finalPrompt = ref('')
+const cards = ref([])
 
-const previewPoints = computed(() => {
-  const points = form.value.points.split('\n').map(item => item.trim()).filter(Boolean)
-  return points.length ? points.slice(0, 5) : ['重点一', '重点二', '重点三']
-})
+const previewPoints = computed(() => parsePoints(form.points).slice(0, 5))
+const cardStats = computed(() => summarizeXhsCards(cards.value))
+
+function parsePoints(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
 
 function buildPrompt() {
-  if (!form.value.title.trim()) {
+  if (!form.title.trim()) {
     ElMessage.warning('请先填写主标题')
     return
   }
-
-  finalPrompt.value = `请生成一张适合小红书发布的AI教辅图片。
-【画面类型】${templateText(form.value.template)}
-【年级科目】${form.value.grade}${form.value.subject}
-【主标题】${form.value.title}
-【副标题/卖点】${form.value.subtitle || '突出资料价值和提分场景'}
-【风格】${form.value.style}，白底为主，信息分区清晰，蓝色、绿色、黄色用于重点标注，少量红笔圈画强调关键点。
-【内容要点】
-${previewPoints.value.map((point, index) => `${index + 1}. ${point}`).join('\n')}
-【比例和质量】${form.value.ratio} 竖版构图，${form.value.quality}质量。
-【硬性要求】中文文字必须准确，标题醒目，层级清楚，适合手机阅读；不要生成无关装饰，不要出现乱码，不要改变教育内容含义。`
-
+  finalPrompt.value = buildXhsPrompt(form)
   ElMessage.success('提示词已生成')
 }
 
-function templateText(template) {
-  const map = {
-    cover: '资料包封面',
-    material: '教辅资料页',
-    mistake: '错题本订正页',
-    card: '知识卡片'
-  }
-  return map[template] || '教辅图片'
+function planCards() {
+  const planned = createXhsCards({
+    count: cardCount.value,
+    title: form.title,
+    points: parsePoints(form.points)
+  }).map(card => ({
+    ...card,
+    pointsText: card.points.join('\n')
+  }))
+  cards.value = planned
+  if (!finalPrompt.value) buildPrompt()
+  ElMessage.success(`已规划 ${planned.length} 张图文卡片`)
+}
+
+function prepareBatchPrompt() {
+  if (!cards.value.length) return
+  const cardText = cards.value
+    .map((card, index) => `第 ${index + 1} 张：${card.title}\n${card.pointsText}`)
+    .join('\n\n')
+  finalPrompt.value = `${buildXhsPrompt(form)}\n\n【图文卡片规划】\n${cardText}`
+  usePrompt()
 }
 
 function usePrompt() {
-  if (!finalPrompt.value) return
+  if (!finalPrompt.value) {
+    buildPrompt()
+  }
   emit('use-prompt', finalPrompt.value)
   ElMessage.success('已填入创作页提示词')
 }
@@ -164,44 +207,59 @@ function usePrompt() {
 <style lang="scss" scoped>
 .xhs-workshop {
   height: 100%;
-  padding: 18px;
-  background: #edf3f8;
   overflow: auto;
+  padding: 22px;
+  background: #f4f7fb;
 }
 
 .workshop-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  gap: 18px;
   margin-bottom: 16px;
+  padding: 22px;
+  border: 1px solid #dce6f2;
+  border-radius: 10px;
+  background: #fff;
 
-  h2 {
+  h2,
+  p {
     margin: 0;
-    color: #10213b;
-    font-size: 22px;
   }
 
-  p {
-    margin: 6px 0 0;
+  p:last-child {
+    margin-top: 8px;
     color: #64748b;
   }
 }
 
+.eyebrow {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .workbench-grid {
   display: grid;
-  grid-template-columns: minmax(420px, 0.9fr) minmax(520px, 1.1fr);
+  grid-template-columns: minmax(430px, 0.95fr) minmax(540px, 1.05fr);
   gap: 16px;
 }
 
 .control-panel,
-.preview-panel {
-  border: 1px solid #d9e3ef;
+.preview-panel,
+.card-section {
+  border: 1px solid #dce6f2;
   border-radius: 10px;
   background: #fff;
-  box-shadow: 0 8px 24px rgba(16, 33, 59, 0.06);
 }
 
-.control-panel {
+.control-panel,
+.preview-panel,
+.card-section {
   padding: 18px;
 }
 
@@ -215,24 +273,23 @@ function usePrompt() {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 16px;
-  padding: 18px;
 }
 
 .mock-canvas {
-  aspect-ratio: 2 / 3;
+  aspect-ratio: 3 / 4;
   padding: 24px;
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(255, 247, 219, 0.85), rgba(255, 255, 255, 0.92)),
+    linear-gradient(180deg, rgba(255, 247, 219, 0.9), rgba(255, 255, 255, 0.96)),
     repeating-linear-gradient(0deg, transparent 0, transparent 30px, rgba(47, 101, 180, 0.08) 31px);
-  border: 1px solid #dce5f0;
+  border: 1px solid #dce6f2;
   box-shadow: inset 12px 0 0 #b9d8f5;
 
   h3 {
     margin: 22px 0 10px;
-    color: #18243a;
-    font-size: 30px;
-    line-height: 1.18;
+    color: #172033;
+    font-size: 28px;
+    line-height: 1.2;
   }
 
   p {
@@ -274,16 +331,53 @@ function usePrompt() {
   min-width: 0;
 }
 
-.result-header {
+.result-header,
+.card-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
-@media (max-width: 1200px) {
+.card-section {
+  margin-top: 16px;
+
+  h3,
+  p {
+    margin: 0;
+  }
+
+  p {
+    margin-top: 6px;
+    color: #64748b;
+  }
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.xhs-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #dce6f2;
+  border-radius: 8px;
+  background: #f8fbff;
+
+  span {
+    color: #64748b;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 1180px) {
   .workbench-grid,
-  .preview-panel {
+  .preview-panel,
+  .form-grid {
     grid-template-columns: 1fr;
   }
 }

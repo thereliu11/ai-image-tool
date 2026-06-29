@@ -3,6 +3,13 @@ const fs = require('fs');
 const axios = require('axios');
 const sharp = require('sharp');
 const { ocrAndRender, extractTextFromImage, generateImageWithNanoBanana } = require('./ocr-renderer');
+const { buildVideoFilterGraph } = require('../shared/videoFilterPlan.cjs');
+const { resolveFfmpegPath } = require('../shared/ffmpegResolver.cjs');
+const {
+  describeRecognitionRegions,
+  filterOcrWordsByRegions,
+  textFromOcrWords
+} = require('../shared/recognitionRegions.cjs');
 
 // Electron模块 - 使用getter模式，确保获取正确的API
 let mainWindow;
@@ -42,14 +49,162 @@ function getClipboard() {
   return e ? e.clipboard : null;
 }
 
+function getMenu() {
+  const e = getElectron();
+  return e ? e.Menu : null;
+}
+
+function getMenuItem() {
+  const e = getElectron();
+  return e ? e.MenuItem : null;
+}
+
+// 设置中文菜单
+function setupChineseMenu() {
+  const Menu = getMenu();
+  if (!Menu) return;
+
+  const template = [
+    {
+      label: '文件',
+      submenu: [
+        {
+          label: '退出',
+          accelerator: 'Alt+F4',
+          click: () => {
+            const app = getApp();
+            if (app) app.quit();
+          }
+        }
+      ]
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { label: '撤销', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
+        { label: '重做', accelerator: 'CmdOrCtrl+Y', role: 'redo' },
+        { type: 'separator' },
+        { label: '剪切', accelerator: 'CmdOrCtrl+X', role: 'cut' },
+        { label: '复制', accelerator: 'CmdOrCtrl+C', role: 'copy' },
+        { label: '粘贴', accelerator: 'CmdOrCtrl+V', role: 'paste' },
+        { type: 'separator' },
+        { label: '全选', accelerator: 'CmdOrCtrl+A', role: 'selectAll' }
+      ]
+    },
+    {
+      label: '视图',
+      submenu: [
+        { label: '重新加载', accelerator: 'CmdOrCtrl+R', role: 'reload' },
+        { label: '强制重新加载', accelerator: 'CmdOrCtrl+Shift+R', role: 'forceReload' },
+        { label: '开发者工具', accelerator: 'F12', role: 'toggleDevTools' },
+        { type: 'separator' },
+        { label: '实际大小', accelerator: 'CmdOrCtrl+0', role: 'resetZoom' },
+        { label: '放大', accelerator: 'CmdOrCtrl+Plus', role: 'zoomIn' },
+        { label: '缩小', accelerator: 'CmdOrCtrl+-', role: 'zoomOut' },
+        { type: 'separator' },
+        { label: '全屏', accelerator: 'F11', role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { label: '最小化', accelerator: 'CmdOrCtrl+M', role: 'minimize' },
+        { label: '关闭', accelerator: 'CmdOrCtrl+W', role: 'close' }
+      ]
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '关于 智绘AI',
+          click: () => {
+            const dialog = getDialog();
+            const shell = getShell();
+            if (dialog && mainWindow) {
+              dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: '关于 智绘AI',
+                message: '智绘AI v26.06.29',
+                detail: '一款用于批量生成AI教辅图片的桌面应用\n\n支持OpenAI/LupoAPI/Gemini等多种API提供商'
+              });
+            }
+          }
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+let autoUpdaterInstance = null;
+let updateDownloadProgress = 0;
+let updateDownloaded = false;
+
 function initAutoUpdater() {
   try {
     const { autoUpdater } = require('electron-updater');
+    autoUpdaterInstance = autoUpdater;
     autoUpdater.autoDownload = false;
-    autoUpdater.on('update-available', () => addLog('检测到新版本，可在发布页下载更新。', 'INFO', 'Updater'));
-    autoUpdater.on('update-not-available', () => addLog('当前已是最新版本。', 'INFO', 'Updater'));
-    autoUpdater.on('error', (error) => addLog(`自动更新检查失败: ${error.message}`, 'WARN', 'Updater'));
-    autoUpdater.checkForUpdates();
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('update-available', (info) => {
+      addLog('检测到新版本: ' + (info?.version || '未知'), 'INFO', 'Updater');
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('update-available', {
+          version: info?.version,
+          releaseDate: info?.releaseDate,
+          releaseNotes: info?.releaseNotes
+        });
+      }
+    });
+
+    autoUpdater.on('update-not-available', () => {
+      addLog('当前已是最新版本。', 'INFO', 'Updater');
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('update-not-available');
+      }
+    });
+
+    autoUpdater.on('download-progress', (progress) => {
+      updateDownloadProgress = Math.round(progress.percent || 0);
+      addLog(`下载进度: ${updateDownloadProgress}%`, 'INFO', 'Updater');
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('update-download-progress', {
+          percent: updateDownloadProgress,
+          transferred: progress.transferred,
+          total: progress.total,
+          bytesPerSecond: progress.bytesPerSecond
+        });
+      }
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      updateDownloaded = true;
+      addLog('新版本下载完成，准备安装...', 'INFO', 'Updater');
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('update-downloaded', {
+          version: info?.version
+        });
+      }
+    });
+
+    autoUpdater.on('error', (error) => {
+      addLog(`自动更新检查失败: ${error.message}`, 'WARN', 'Updater');
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('update-error', {
+          message: error.message
+        });
+      }
+    });
+
+    // 启动后延迟 5 秒检查更新
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(err => {
+        addLog(`启动时更新检查失败: ${err.message}`, 'WARN', 'Updater');
+      });
+    }, 5000);
   } catch (error) {
     addLog('自动更新模块未安装，已跳过更新检查。', 'WARN', 'Updater');
   }
@@ -62,6 +217,7 @@ const dialog = getDialog();
 const shell = getShell();
 const clipboard = getClipboard();
 const activeGenerationJobs = new Map();
+let configStore = null;
 
 async function parsePageRangesShared(input, maxPage) {
   const mod = await import('../shared/pageRange.mjs');
@@ -106,6 +262,9 @@ const defaultConfig = {
   batch: {
     maxBatchSize: 20,
     maxConcurrency: 4
+  },
+  tools: {
+    ffmpegPath: ''
   }
 };
 
@@ -160,6 +319,14 @@ const API_PROVIDERS = {
     imageModel: null,
     chatModel: 'mimo-v2.5-pro',
     supportsImage: false
+  },
+  aihubmix: {
+    name: 'AiHubMix',
+    baseURL: 'https://aihubmix.com/api/v1',
+    imageModel: 'gpt-image-2',
+    chatModel: 'gpt-4o',
+    supportsImage: true,
+    openAICompatible: true
   }
 };
 
@@ -243,7 +410,7 @@ function createWindow() {
     height: 900,
     minWidth: 1200,
     minHeight: 700,
-    title: 'AI作图工具',
+    title: '智绘AI',
     icon: path.join(__dirname, '../../assets/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
@@ -261,6 +428,9 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   }
+
+  // 设置中文菜单
+  setupChineseMenu();
 }
 
 // 日志函数
@@ -300,15 +470,35 @@ async function withTimeoutAndRetry(fn, timeoutMs, maxRetries, retryDelay, logFn)
           await new Promise(resolve => setTimeout(resolve, delay * 1000));
           continue;
         }
+
+        if (logFn) {
+          logFn(`API返回错误: ${errorMsg}`, 'ERROR');
+        }
+        throw new Error(errorMsg);
       }
 
       return result;
     } catch (error) {
+      // 429错误的友好提示
+      if (error.message.includes('429') || (error.response && error.response.status === 429)) {
+        if (retries < maxRetries) {
+          retries++;
+          const delay = retryDelay * Math.pow(2, retries - 1);
+          if (logFn) {
+            logFn(`接口返回 429，${delay}秒后重试（第${retries}/${maxRetries}次）: 请求过于频繁或额度不足`, 'WARN');
+          }
+          await new Promise(resolve => setTimeout(resolve, delay * 1000));
+          continue;
+        }
+        const friendlyError = new Error('接口返回 429：请求过于频繁或额度不足，请稍后重试、降低并发、或更换 API Key。');
+        friendlyError.response = error.response;
+        throw friendlyError;
+      }
+
       // 检查是否为可重试的网络错误
       const isNetworkError = error.message.includes('timeout') ||
                              error.message.includes('ECONNRESET') ||
                              error.message.includes('ETIMEDOUT') ||
-                             error.message.includes('429') ||
                              error.message.includes('500') ||
                              error.message.includes('502') ||
                              error.message.includes('503');
@@ -331,9 +521,19 @@ async function withTimeoutAndRetry(fn, timeoutMs, maxRetries, retryDelay, logFn)
 async function redrawTeachingMaterial(referenceImagePath, stylePrompt, size = '1024x1536', config, options = {}) {
   const startTime = Date.now();
   const { normalizeApiKeys, normalizeImageQuality } = await import('../shared/batchControls.mjs');
+  const { resolveImageSizeForProvider } = await import('../shared/imageSizeSpec.mjs');
+  const apiConfig = getApiConfig(config);
+  const imageSize = resolveImageSizeForProvider(size, {
+    provider: config.api?.provider,
+    model: apiConfig.imageModel
+  });
+  const actualSize = imageSize.requestSize;
+  stylePrompt = [stylePrompt, imageSize.promptHint].filter(Boolean).join('\n');
+  if (String(size || '') !== actualSize || imageSize.ratio === '3:4') {
+    addLog(`尺寸规格: ${size || '默认'} -> ${actualSize} (${imageSize.label})`, 'INFO', 'API');
+  }
 
   // 获取API配置
-  const apiConfig = getApiConfig(config);
   const apiKeys = normalizeApiKeys(config.api.token, config.api.apiKeys);
   const requestApiKey = options.apiKey || config.api.token || apiKeys[0] || '';
   const imageQuality = normalizeImageQuality(options.quality || config.api.imageQuality || config.api.finalQuality || 'high');
@@ -438,7 +638,7 @@ ${stylePrompt}
 - 禁止改变排版结构
 - 禁止添加无关背景`,
       image: [`data:${mimeType};base64,${imageBase64}`],
-      size: size
+      size: actualSize
     };
   } else if (config.api.provider === 'qwen') {
     // 通义千问格式
@@ -456,7 +656,7 @@ ${stylePrompt}`,
       },
       parameters: {
         n: 1,
-        size: size
+        size: actualSize
       }
     };
   } else {
@@ -475,7 +675,7 @@ ${stylePrompt}`;
     requestBody.append('model', apiConfig.imageModel);
     requestBody.append('prompt', prompt);
     requestBody.append('image', imageBlob, path.basename(referenceImagePath));
-    requestBody.append('size', size);
+    requestBody.append('size', actualSize);
     requestBody.append('quality', imageQuality);
     requestBody.append('output_format', 'jpeg');
     requestBody.append('n', '1');
@@ -508,7 +708,16 @@ ${stylePrompt}`;
     } else if (config.api.provider === 'qwen') {
       b64Data = response.data.output.results[0].b64_image;
     } else {
-      b64Data = response.data.data[0].b64_json;
+      const imageData = await resolveImageDataFromGenerationResponse(response, apiConfig, axiosConfig, config, 'API');
+      if (imageData.type === 'url') {
+        const imageResponse = await axios.get(imageData.value, {
+          responseType: 'arraybuffer',
+          timeout: 120000
+        });
+        b64Data = Buffer.from(imageResponse.data).toString('base64');
+      } else {
+        b64Data = imageData.value;
+      }
     }
 
     return {
@@ -527,6 +736,180 @@ ${stylePrompt}`;
       success: false,
       error: errorMsg
     };
+  }
+}
+
+function getOutputRoot(config, fallbackFolder = '生成图片') {
+  const configured = config?.output?.rawOutputDir || config?.output?.finalOutputDir;
+  if (configured) return configured;
+  return path.join(app.getPath('documents'), 'AI教辅绘制', fallbackFolder);
+}
+
+async function loadAsyncTaskHelpers() {
+  return await import('../renderer/src/utils/asyncTaskPolling.mjs');
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function extractImageDataFromGenerationResponse(response) {
+  const data = response?.data;
+  const first = data?.data?.[0];
+  if (first?.b64_json) {
+    return { type: 'base64', value: first.b64_json, revisedPrompt: first.revised_prompt || '' };
+  }
+  if (first?.url) {
+    return { type: 'url', value: first.url, revisedPrompt: first.revised_prompt || '' };
+  }
+  if (data?.output?.results?.[0]?.b64_image) {
+    return { type: 'base64', value: data.output.results[0].b64_image, revisedPrompt: '' };
+  }
+  throw new Error('图片生成接口未返回可保存的图片数据');
+}
+
+async function pollAsyncImageTask(apiConfig, taskInfo, axiosConfig, config = {}, moduleName = 'API') {
+  const {
+    buildAsyncPollUrl,
+    extractImagePayloadFromAsyncResult,
+    getAsyncTaskStatus,
+    isAsyncTaskFailed,
+    isAsyncTaskFinished
+  } = await loadAsyncTaskHelpers();
+
+  const pollUrl = buildAsyncPollUrl(apiConfig.baseURL, taskInfo);
+  const interval = Math.max(1000, Number(config?.api?.pollingInterval) || 3000);
+  const maxAttempts = Math.max(1, Number(config?.api?.maxPollingAttempts) || 80);
+  addLog(`Async image task accepted: ${taskInfo.taskId}. Polling result...`, 'INFO', moduleName);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await axios.get(pollUrl, {
+      ...axiosConfig,
+      timeout: Math.max(Number(axiosConfig?.timeout) || 0, interval + 30000)
+    });
+    const payload = response.data || {};
+    const status = getAsyncTaskStatus(payload) || 'pending';
+
+    if (isAsyncTaskFailed(payload)) {
+      const message = payload?.error?.message || payload?.message || payload?.data?.error || `Async image task failed: ${status}`;
+      throw new Error(message);
+    }
+
+    if (isAsyncTaskFinished(payload)) {
+      addLog(`Async image task finished: ${taskInfo.taskId}`, 'INFO', moduleName);
+      return extractImagePayloadFromAsyncResult(payload);
+    }
+
+    addLog(`Async image task pending (${attempt}/${maxAttempts}): ${status}`, 'INFO', moduleName);
+    if (attempt < maxAttempts) {
+      await sleep(interval);
+    }
+  }
+
+  throw new Error('Async image task polling timed out');
+}
+
+async function resolveImageDataFromGenerationResponse(response, apiConfig, axiosConfig, config = {}, moduleName = 'API') {
+  try {
+    return extractImageDataFromGenerationResponse(response);
+  } catch (directError) {
+    const { extractAsyncTaskInfo } = await loadAsyncTaskHelpers();
+    const taskInfo = extractAsyncTaskInfo(response);
+    if (!taskInfo) {
+      throw directError;
+    }
+    return await pollAsyncImageTask(apiConfig, taskInfo, axiosConfig, config, moduleName);
+  }
+}
+
+async function generateTextToImage(params = {}, config = {}) {
+  const startTime = Date.now();
+  try {
+    const { normalizeApiKeys, normalizeImageQuality } = await import('../shared/batchControls.mjs');
+    const { resolveImageSizeForProvider } = await import('../shared/imageSizeSpec.mjs');
+    const apiConfig = getApiConfig(config);
+    const apiKeys = normalizeApiKeys(config.api?.token, config.api?.apiKeys);
+    const apiKey = params.apiKey || config.api?.token || apiKeys[0] || '';
+    const rawPrompt = String(params.prompt || '').trim();
+    const imageSize = resolveImageSizeForProvider(params.ratio || params.size || '1024x1536', {
+      provider: config.api?.provider,
+      model: apiConfig.imageModel
+    });
+    const prompt = [rawPrompt, imageSize.promptHint].filter(Boolean).join('\n\n');
+    const size = imageSize.requestSize;
+    const quality = normalizeImageQuality(params.quality || config.api?.imageQuality || 'medium');
+    const outputName = sanitizeFileName(params.outputName || '文生图');
+
+    if (!rawPrompt) {
+      return { success: false, error: '请先填写文生图提示词' };
+    }
+    if (!apiConfig.imageModel) {
+      return { success: false, error: `当前API提供商(${config.api?.provider || 'openai'})不支持图片生成` };
+    }
+    if (!apiKey) {
+      return { success: false, error: '未配置API密钥，请在API设置中配置' };
+    }
+    if (!isOpenAICompatibleProvider(config.api?.provider) && config.api?.provider !== 'zhipu') {
+      return { success: false, error: '文生图当前支持 OpenAI、LupoAPI、AiHubMix 等 OpenAI 兼容接口，以及智谱AI' };
+    }
+
+    const axiosConfig = createAxiosConfig({
+      ...config,
+      api: {
+        ...config.api,
+        token: apiKey
+      }
+    }, 120000);
+
+    const requestBody = {
+      model: apiConfig.imageModel,
+      prompt,
+      size,
+      quality,
+      n: 1
+    };
+    if (config.api?.provider !== 'zhipu') {
+      requestBody.output_format = 'jpeg';
+    }
+
+    addLog(`开始文生图 - 提供商: ${config.api?.provider || 'openai'}, 模型: ${apiConfig.imageModel}, 尺寸: ${size} (${imageSize.label})`, 'INFO', 'TextImage');
+    const response = await axios.post(`${apiConfig.baseURL}/images/generations`, requestBody, axiosConfig);
+    const imageData = await resolveImageDataFromGenerationResponse(response, apiConfig, axiosConfig, config, 'TextImage');
+    let imageBuffer;
+
+    if (imageData.type === 'url') {
+      const imageResponse = await axios.get(imageData.value, {
+        responseType: 'arraybuffer',
+        timeout: 120000
+      });
+      imageBuffer = Buffer.from(imageResponse.data);
+    } else {
+      imageBuffer = Buffer.from(imageData.value, 'base64');
+    }
+
+    const outputDir = path.join(getOutputRoot(config), '文生图');
+    fs.mkdirSync(outputDir, { recursive: true });
+    const outputPath = path.join(outputDir, `${outputName}_${Date.now()}.jpg`);
+    fs.writeFileSync(outputPath, imageBuffer);
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    addLog(`文生图完成，耗时 ${duration} 秒: ${path.basename(outputPath)}`, 'INFO', 'TextImage');
+    return {
+      success: true,
+      outputPath,
+      outputDir,
+      provider: config.api?.provider || 'openai',
+      model: apiConfig.imageModel,
+      revisedPrompt: imageData.revisedPrompt
+    };
+  } catch (error) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    const errorMsg = error.response?.data?.error?.message || error.message;
+    const friendly = error.response?.status === 429 || String(errorMsg).includes('429')
+      ? '接口返回 429：请求过于频繁或额度不足，请稍后重试、降低并发、或更换 API Key。'
+      : errorMsg;
+    addLog(`文生图失败 (${duration}秒): ${friendly}`, 'ERROR', 'TextImage');
+    return { success: false, error: friendly };
   }
 }
 
@@ -755,6 +1138,7 @@ async function imagesToSimplePdf(imagePaths, outputPath) {
 
 // 注册IPC处理器
 function registerIPC(store) {
+  configStore = store;
   // 获取配置
   ipcMain.handle('get-config', () => {
     return sanitizeConfigForRenderer(store.get('config'));
@@ -885,6 +1269,29 @@ function registerIPC(store) {
     return { installed: false };
   });
 
+  ipcMain.handle('check-ffmpeg', () => {
+    try {
+      const ffmpegPath = resolveFfmpegPath({
+        configuredPath: store.get('config')?.tools?.ffmpegPath
+      });
+      return { installed: true, path: ffmpegPath };
+    } catch (error) {
+      return { installed: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('test-ffmpeg-path', (event, { ffmpegPath } = {}) => {
+    try {
+      const resolvedPath = resolveFfmpegPath({
+        configuredPath: ffmpegPath,
+        requireConfigured: Boolean(String(ffmpegPath || '').trim())
+      });
+      return { installed: true, path: resolvedPath };
+    } catch (error) {
+      return { installed: false, error: error.message };
+    }
+  });
+
   // 网络诊断
   ipcMain.handle('network-diagnosis', async () => {
     const config = store.get('config');
@@ -935,6 +1342,11 @@ function registerIPC(store) {
   ipcMain.handle('generate-image', async (event, { referenceImagePath, stylePrompt, size, quality }) => {
     const config = store.get('config');
     return await redrawTeachingMaterial(referenceImagePath, stylePrompt, size, config, { quality });
+  });
+
+  ipcMain.handle('text-to-image-generate', async (event, params) => {
+    const config = store.get('config');
+    return await generateTextToImage(params, config);
   });
 
   // 应用原创性增强
@@ -1022,18 +1434,28 @@ function registerIPC(store) {
     fs.mkdirSync(outputDir, { recursive: true });
     addLog(`输出目录: ${outputDir}`, 'INFO', 'BatchOCR');
 
-    const tasks = goodsList.filter(item => item.status === '待生成');
+    const tasks = goodsList.filter(item => {
+      // 兼容中英文状态,只要不是已完成/失败且没有生成图片的都算
+      const isFinished = item.status === 'completed' || item.status === '已完成' ||
+                         item.status === 'failed' || item.status === '失败'
+      const hasGenerated = item.generatedImage
+      return !isFinished && !hasGenerated
+    });
     let completedCount = 0;
     let successCount = 0;
     const totalCount = tasks.length;
 
     addLog(`开始批量OCR渲染: ${totalCount} 张图片`, 'INFO', 'BatchOCR');
 
+    // 检查是否是 Gemini 配置
+    if (config.api.provider !== 'gemini') {
+      addLog('注意：当前 OCR 内容保真模式使用 Gemini OCR + Gemini 图片生成，建议在 API 设置中切换到 Gemini 提供商以获得最佳体验', 'WARN', 'BatchOCR');
+    }
+
     // 延时和重试配置
     const DELAY_BETWEEN_REQUESTS = 4000; // 每张图片间隔4秒
     const MAX_RETRIES = 3; // 最多重试3次
-    const RETRY_DELAY = 5000; // 重试等待5秒
-    const RETRYABLE_STATUS_CODES = [429, 502, 503]; // 可重试的错误码
+    const RETRY_DELAY = 2.0; // 重试基础延迟（秒）
 
     for (const item of tasks) {
       item.status = '生成中';
@@ -1041,6 +1463,7 @@ function registerIPC(store) {
 
       let retries = 0;
       let success = false;
+      let textData = null; // 缓存OCR结果，避免重复OCR
 
       while (retries <= MAX_RETRIES && !success) {
         try {
@@ -1053,14 +1476,18 @@ function registerIPC(store) {
             addLog(`[${item.id}/${totalCount}] 第${retries}次重试`, 'WARN', 'BatchOCR');
           }
 
-          // 第一步：提取文字
-          addLog(`[${item.id}/${totalCount}] Step 1: Gemini OCR提取文字...`, 'INFO', 'BatchOCR');
-          const textData = await extractTextFromImage(item.referenceImage, config);
+          // 第一步：提取文字（只在第一次执行，缓存结果）
+          if (textData === null) {
+            addLog(`[${item.id}/${totalCount}] Step 1: Gemini OCR提取文字...`, 'INFO', 'BatchOCR');
+            textData = await extractTextFromImage(item.referenceImage, config);
 
-          if (!textData || textData.length === 0) {
-            throw new Error('未能提取到文字');
+            if (!textData || textData.length === 0) {
+              throw new Error('未能提取到文字');
+            }
+            addLog(`[${item.id}/${totalCount}] 提取到 ${textData.length} 条文字`, 'INFO', 'BatchOCR');
+          } else {
+            addLog(`[${item.id}/${totalCount}] 复用已缓存的OCR结果，跳过Step 1`, 'INFO', 'BatchOCR');
           }
-          addLog(`[${item.id}/${totalCount}] 提取到 ${textData.length} 条文字`, 'INFO', 'BatchOCR');
 
           // 第二步：Nano Banana生成图片
           addLog(`[${item.id}/${totalCount}] Step 2: Nano Banana生成精美图片...`, 'INFO', 'BatchOCR');
@@ -1076,8 +1503,12 @@ function registerIPC(store) {
           addLog(`[${item.id}/${totalCount}] 完成`, 'INFO', 'BatchOCR');
 
         } catch (error) {
+          // 检查是否为429错误
+          const is429 = error.message.includes('429') ||
+                       (error.response && error.response.status === 429);
+
           // 检查是否为可重试的错误
-          const isRetryable = error.message.includes('429') ||
+          const isRetryable = is429 ||
                               error.message.includes('502') ||
                               error.message.includes('503') ||
                               error.message.includes('rate') ||
@@ -1086,13 +1517,22 @@ function registerIPC(store) {
 
           if (isRetryable && retries < MAX_RETRIES) {
             retries++;
-            addLog(`[${item.id}/${totalCount}] 遇到可重试错误，${RETRY_DELAY/1000}秒后重试（第${retries}/${MAX_RETRIES}次）: ${error.message}`, 'WARN', 'BatchOCR');
-            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            const delay = RETRY_DELAY * Math.pow(2, retries - 1);
+            let errorMsg = error.message;
+            if (is429) {
+              errorMsg = '请求过于频繁或额度不足';
+            }
+            addLog(`[${item.id}/${totalCount}] 遇到可重试错误，${delay}秒后重试（第${retries}/${MAX_RETRIES}次）: ${errorMsg}`, 'WARN', 'BatchOCR');
+            await new Promise(resolve => setTimeout(resolve, delay * 1000));
           } else {
             // 不可重试或重试次数用尽
+            let userFriendlyError = error.message;
+            if (is429) {
+              userFriendlyError = '接口返回 429：请求过于频繁或额度不足，请稍后重试、降低并发、或更换 API Key。';
+            }
             item.status = '失败';
-            item.error = error.message;
-            addLog(`[${item.id}/${totalCount}] 失败: ${error.message}`, 'ERROR', 'BatchOCR');
+            item.error = userFriendlyError;
+            addLog(`[${item.id}/${totalCount}] 失败: ${userFriendlyError}`, 'ERROR', 'BatchOCR');
           }
         }
       }
@@ -1208,8 +1648,8 @@ function registerIPC(store) {
   });
 
   // ==================== 百宝箱：图片处理 ====================
-  ipcMain.handle('image-watermark', async (event, { inputPath, text, position, opacity }) => {
-    return await addWatermark(inputPath, text, position, opacity);
+  ipcMain.handle('image-watermark', async (event, { inputPath, text, position, opacity, mode, logoPath, fontFamily }) => {
+    return await addWatermark(inputPath, text, position, opacity, { mode, logoPath, fontFamily });
   });
 
   ipcMain.handle('image-compress', async (event, { inputPath, quality }) => {
@@ -1224,9 +1664,21 @@ function registerIPC(store) {
     return await replaceBackground(foregroundPath, backgroundPath);
   });
 
+  ipcMain.handle('image-scene-compose', async (event, { backgroundPath, overlayPath, options }) => {
+    return await composeSceneImage(backgroundPath, overlayPath, options);
+  });
+
+  ipcMain.handle('image-split', async (event, params) => {
+    return await splitImages(params);
+  });
+
+  ipcMain.handle('xhs-goods-download', async (event, params) => {
+    return await downloadXhsGoodsAssets(params);
+  });
+
   // ==================== 百宝箱：视频处理 ====================
-  ipcMain.handle('video-create', async (event, { imagePaths, durationPerImage }) => {
-    return await imagesToVideo(imagePaths, durationPerImage);
+  ipcMain.handle('video-create', async (event, { imagePaths, durationPerImage, mode, transition, resolution }) => {
+    return await imagesToVideo(imagePaths, durationPerImage, { mode, transition, resolution });
   });
 
   ipcMain.handle('video-trim', async (event, { inputPath, startTime, endTime }) => {
@@ -1250,8 +1702,8 @@ function registerIPC(store) {
     return await wordToPdf(inputPath);
   });
 
-  ipcMain.handle('doc-pdf-to-images', async (event, { inputPath }) => {
-    return await pdfToImages(inputPath);
+  ipcMain.handle('doc-pdf-to-images', async (event, { inputPath, pages, options }) => {
+    return await pdfToImages(inputPath, { pages, ...options });
   });
 
   ipcMain.handle('doc-pdf-to-video', async (event, { inputPath, durationPerPage }) => {
@@ -1269,9 +1721,19 @@ function registerIPC(store) {
     return { success: true, templates: loadTemplates() };
   });
 
-  ipcMain.handle('save-template', (event, { name, prompt }) => {
+  ipcMain.handle('analyze-layout-template', async (event, { imagePaths, note } = {}) => {
+    const config = store.get('config');
+    return await analyzeReferenceLayout(imagePaths, note, config);
+  });
+
+  ipcMain.handle('save-template', (event, template) => {
     const templates = loadTemplates();
-    templates.push({ name, prompt, createdAt: new Date().toISOString() });
+    templates.push({
+      ...template,
+      name: template?.name || '未命名模板',
+      prompt: template?.prompt || '',
+      createdAt: template?.createdAt || new Date().toISOString()
+    });
     saveTemplatesToFile(templates);
     return { success: true };
   });
@@ -1308,23 +1770,32 @@ function registerIPC(store) {
     return await ocrExportToDocx(imagePaths);
   });
 
-  ipcMain.handle('ocr-extract-text', async (event, { imagePath }) => {
-    return await ocrExtractText(imagePath);
+  ipcMain.handle('ocr-extract-text', async (event, { imagePath, regions } = {}) => {
+    return await ocrExtractText(imagePath, { regions });
   });
 
   ipcMain.handle('quality-check-image', async (event, { sourceImage, generatedImage }) => {
     return await qualityCheckImage(sourceImage, generatedImage);
   });
 
-  ipcMain.handle('rewrite-document', async (event, { inputPath, mode, outputFormat }) => {
+  ipcMain.handle('visual-quality-check-image', async (event, { imagePath, targetRatio }) => {
+    return await visualQualityCheckImage(imagePath, targetRatio);
+  });
+
+  ipcMain.handle('rewrite-document', async (event, { inputPath, mode, outputFormat, pageRange, ratio, preserveOriginal }) => {
     const config = store.get('config');
-    return await rewriteDocument(inputPath, mode, outputFormat, config);
+    return await rewriteDocument(inputPath, mode, outputFormat, config, { pageRange, ratio, preserveOriginal });
+  });
+
+  ipcMain.handle('separation-export', async (event, params) => {
+    const config = store.get('config');
+    return await exportSeparationWorkspace(params, config);
   });
 
   // ==================== 智能去字/提取底图 ====================
-  ipcMain.handle('remove-text', async (event, { imagePath }) => {
+  ipcMain.handle('remove-text', async (event, { imagePath, regions } = {}) => {
     const config = store.get('config');
-    return await removeTextFromImage(imagePath, config);
+    return await removeTextFromImage(imagePath, config, { regions });
   });
 
   ipcMain.handle('extract-background', async (event, { imagePath }) => {
@@ -1369,6 +1840,14 @@ function registerIPC(store) {
       fs.mkdirSync(outputDir, { recursive: true });
       const outputPath = path.join(outputDir, `collage_${Date.now()}.png`);
       fs.writeFileSync(outputPath, buffer);
+      if (options?.exportZip) {
+        const JSZip = require('jszip');
+        const zip = new JSZip();
+        zip.file(path.basename(outputPath), buffer);
+        const zipPath = outputPath.replace(/\.png$/i, '.zip');
+        fs.writeFileSync(zipPath, await zip.generateAsync({ type: 'nodebuffer' }));
+        return { success: true, outputPath: zipPath, previewPath: outputPath, outputDir };
+      }
       return { success: true, outputPath, outputDir };
     } catch (error) {
       return { success: false, error: error.message };
@@ -1410,6 +1889,47 @@ function registerIPC(store) {
 
   ipcMain.handle('update-project', async (event, { projectId, updates }) => {
     return await updateProject(projectId, updates);
+  });
+
+  // ==================== 自动更新 ====================
+  ipcMain.handle('check-for-updates', async () => {
+    if (!autoUpdaterInstance) {
+      return { success: false, error: '自动更新模块未安装' };
+    }
+    try {
+      const result = await autoUpdaterInstance.checkForUpdates();
+      return { success: true, updateInfo: result?.updateInfo };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('download-update', async () => {
+    if (!autoUpdaterInstance) {
+      return { success: false, error: '自动更新模块未安装' };
+    }
+    try {
+      await autoUpdaterInstance.downloadUpdate();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('install-update', () => {
+    if (!autoUpdaterInstance) {
+      return { success: false, error: '自动更新模块未安装' };
+    }
+    autoUpdaterInstance.quitAndInstall(false, true);
+    return { success: true };
+  });
+
+  ipcMain.handle('get-update-status', () => {
+    return {
+      hasUpdater: !!autoUpdaterInstance,
+      downloadProgress: updateDownloadProgress,
+      downloaded: updateDownloaded
+    };
   });
 }
 
@@ -1613,23 +2133,51 @@ async function batchGenerateImagesV2(goodsList, promptText, maxConcurrency, conf
   return { success: true, canceled: stopped, jobId, successCount, totalCount, failCount: totalCount - successCount, outputDir: outputBase };
 }
 
-async function addWatermark(inputPath, text, position = 'bottom-right', opacity = 30) {
+async function addWatermark(inputPath, text, position = 'bottom-right', opacity = 30, options = {}) {
   try {
     const image = sharp(inputPath);
     const metadata = await image.metadata();
     const width = metadata.width;
     const height = metadata.height;
+    const safeOpacity = Math.max(1, Math.min(100, Number(opacity) || 30)) / 100;
+
+    if (options.mode === 'logo' && options.logoPath) {
+      const logoMeta = await sharp(options.logoPath).metadata();
+      const maxLogoWidth = Math.max(48, Math.round(width * 0.22));
+      const maxLogoHeight = Math.max(48, Math.round(height * 0.16));
+      const logoBuffer = await sharp(options.logoPath)
+        .resize({ width: maxLogoWidth, height: maxLogoHeight, fit: 'inside', withoutEnlargement: true })
+        .png()
+        .toBuffer();
+      const resizedLogo = await sharp(logoBuffer).metadata();
+      const pos = getOverlayPosition(
+        position,
+        width,
+        height,
+        resizedLogo.width || logoMeta.width || maxLogoWidth,
+        resizedLogo.height || logoMeta.height || maxLogoHeight
+      );
+      const outputPath = inputPath.replace(/(\.\w+)$/, '_watermark$1');
+      await image
+        .composite([{ input: logoBuffer, left: pos.left, top: pos.top, blend: 'over', opacity: safeOpacity }])
+        .toFile(outputPath);
+
+      const outputDir = path.dirname(outputPath);
+      addLog(`Logo水印添加成功: ${path.basename(outputPath)}`, 'INFO', 'Watermark');
+      return { success: true, outputPath, outputDir };
+    }
 
     // 创建水印SVG
     const fontSize = Math.max(16, Math.min(width, height) / 15);
+    const fontFamily = escapeXml(options.fontFamily || 'Microsoft YaHei');
     const svgText = `<svg width="${width}" height="${height}">
       <style>
         .watermark {
           fill: white;
           font-size: ${fontSize}px;
-          font-family: Arial, sans-serif;
+          font-family: "${fontFamily}", Arial, sans-serif;
           font-weight: bold;
-          opacity: ${opacity / 100};
+          opacity: ${safeOpacity};
           filter: drop-shadow(1px 1px 2px rgba(0,0,0,0.5));
         }
       </style>
@@ -1678,6 +2226,27 @@ function getTextAnchor(position) {
     case 'bottom-left': return 'start';
     case 'center': return 'middle';
     default: return 'end';
+  }
+}
+
+function getOverlayPosition(position, width, height, overlayWidth, overlayHeight, padding = 20) {
+  const centerLeft = Math.round((width - overlayWidth) / 2);
+  const centerTop = Math.round((height - overlayHeight) / 2);
+  switch (position) {
+    case 'top-left':
+      return { left: padding, top: padding };
+    case 'top-right':
+      return { left: Math.max(padding, width - overlayWidth - padding), top: padding };
+    case 'bottom-left':
+      return { left: padding, top: Math.max(padding, height - overlayHeight - padding) };
+    case 'center':
+      return { left: centerLeft, top: centerTop };
+    case 'bottom-right':
+    default:
+      return {
+        left: Math.max(padding, width - overlayWidth - padding),
+        top: Math.max(padding, height - overlayHeight - padding)
+      };
   }
 }
 
@@ -1790,32 +2359,289 @@ async function replaceBackground(foregroundPath, backgroundPath) {
   }
 }
 
+function clampNumberLocal(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function normalizeScenePoints(points) {
+  const fallback = [
+    { x: 22, y: 10 },
+    { x: 78, y: 10 },
+    { x: 78, y: 92 },
+    { x: 22, y: 92 }
+  ];
+  const source = Array.isArray(points) && points.length >= 4 ? points.slice(0, 4) : fallback;
+  return source.map(point => ({
+    x: clampNumberLocal(point?.x, 0, 100, 0),
+    y: clampNumberLocal(point?.y, 0, 100, 0)
+  }));
+}
+
+function sceneTargetBox(points, width, height) {
+  const pixelPoints = normalizeScenePoints(points).map(point => ({
+    x: Math.round((point.x / 100) * width),
+    y: Math.round((point.y / 100) * height)
+  }));
+  const left = Math.max(0, Math.min(...pixelPoints.map(point => point.x)));
+  const top = Math.max(0, Math.min(...pixelPoints.map(point => point.y)));
+  const right = Math.min(width, Math.max(...pixelPoints.map(point => point.x)));
+  const bottom = Math.min(height, Math.max(...pixelPoints.map(point => point.y)));
+
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top)
+  };
+}
+
+async function composeSceneImage(backgroundPath, overlayPath, options = {}) {
+  try {
+    if (!backgroundPath || !fs.existsSync(backgroundPath)) {
+      return { success: false, error: '请先选择场景背景图' };
+    }
+    if (!overlayPath || !fs.existsSync(overlayPath)) {
+      return { success: false, error: '请先选择需要嵌入的图片' };
+    }
+
+    const bgMeta = await sharp(backgroundPath).metadata();
+    const bgWidth = bgMeta.width || 1242;
+    const bgHeight = bgMeta.height || 1656;
+    const target = sceneTargetBox(options.points, bgWidth, bgHeight);
+    const fit = ['contain', 'cover', 'fill'].includes(options.fit) ? options.fit : 'contain';
+    const blend = ['over', 'multiply', 'screen', 'overlay', 'soft-light'].includes(options.blend) ? options.blend : 'over';
+    const opacity = clampNumberLocal(options.opacity, 1, 100, 100) / 100;
+    const outputDir = path.join(path.dirname(backgroundPath), 'scene_compose');
+    const safeName = sanitizeFileName(options.outputName || path.basename(overlayPath, path.extname(overlayPath)), 'scene-compose');
+    const outputPath = path.join(outputDir, `${safeName}_${Date.now()}.png`);
+
+    fs.mkdirSync(outputDir, { recursive: true });
+    const overlayBuffer = await sharp(overlayPath)
+      .rotate()
+      .resize(target.width, target.height, {
+        fit,
+        background: { r: 255, g: 255, b: 255, alpha: 0 }
+      })
+      .png()
+      .toBuffer();
+
+    const overlayMeta = await sharp(overlayBuffer).metadata();
+    const left = target.left + Math.round((target.width - (overlayMeta.width || target.width)) / 2);
+    const top = target.top + Math.round((target.height - (overlayMeta.height || target.height)) / 2);
+
+    await sharp(backgroundPath)
+      .rotate()
+      .composite([{
+        input: overlayBuffer,
+        left: Math.max(0, left),
+        top: Math.max(0, top),
+        blend,
+        opacity
+      }])
+      .png()
+      .toFile(outputPath);
+
+    addLog(`场景化图片排版成功: ${path.basename(outputPath)}`, 'INFO', 'SceneCompose');
+    return {
+      success: true,
+      outputPath,
+      outputDir,
+      target,
+      blend,
+      opacity: Math.round(opacity * 100),
+      fit
+    };
+  } catch (error) {
+    addLog(`场景化图片排版失败: ${error.message}`, 'ERROR', 'SceneCompose');
+    return { success: false, error: error.message };
+  }
+}
+
+async function splitImages(params = {}) {
+  try {
+    const { buildImageSplitPlan, normalizeImageSplitRequest } = await import('../renderer/src/utils/imageSplitWorkflow.mjs');
+    const request = normalizeImageSplitRequest(params);
+
+    if (!request.imagePaths.length) {
+      return { success: false, error: '请选择至少1张需要切片的图片' };
+    }
+
+    const existingPaths = request.imagePaths.filter(imagePath => fs.existsSync(imagePath));
+    if (!existingPaths.length) {
+      return { success: false, error: '选择的图片文件不存在，请重新选择' };
+    }
+
+    const metadataByPath = {};
+    const readErrors = [];
+    for (const imagePath of existingPaths) {
+      try {
+        metadataByPath[imagePath] = await sharp(imagePath).metadata();
+      } catch (error) {
+        readErrors.push({ imagePath, reason: error.message });
+      }
+    }
+
+    const plan = buildImageSplitPlan({ ...request, imagePaths: existingPaths }, metadataByPath);
+    if (!plan.slices.length) {
+      return {
+        success: false,
+        error: readErrors[0]?.reason || '没有可切片的图片，请检查图片尺寸或格式',
+        issues: [...plan.issues, ...readErrors]
+      };
+    }
+
+    const outputDir = path.join(path.dirname(existingPaths[0]), `image_slices_${Date.now()}`);
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const outputPaths = [];
+    for (const slice of plan.slices) {
+      const outputPath = path.join(outputDir, slice.outputName);
+      const pipeline = sharp(slice.imagePath).extract({
+        left: slice.left,
+        top: slice.top,
+        width: slice.width,
+        height: slice.height
+      });
+
+      if (plan.format === 'jpeg') {
+        await pipeline.jpeg({ quality: 92 }).toFile(outputPath);
+      } else if (plan.format === 'webp') {
+        await pipeline.webp({ quality: 92 }).toFile(outputPath);
+      } else {
+        await pipeline.png({ compressionLevel: 8 }).toFile(outputPath);
+      }
+
+      outputPaths.push(outputPath);
+    }
+
+    const issues = [...plan.issues, ...readErrors];
+    addLog(`图片切片完成: ${outputPaths.length}张，输出到 ${outputDir}`, issues.length ? 'WARN' : 'INFO', 'ImageSplit');
+    return {
+      success: true,
+      outputDir,
+      outputPaths,
+      sliceCount: outputPaths.length,
+      issueCount: issues.length,
+      issues,
+      direction: plan.direction,
+      targetSize: plan.targetSize,
+      overlap: plan.overlap,
+      format: plan.format
+    };
+  } catch (error) {
+    addLog(`图片切片失败: ${error.message}`, 'ERROR', 'ImageSplit');
+    return { success: false, error: error.message };
+  }
+}
+
+function getExtensionFromContentType(contentType = '') {
+  const normalized = String(contentType).toLowerCase();
+  if (normalized.includes('png')) return 'png';
+  if (normalized.includes('webp')) return 'webp';
+  if (normalized.includes('gif')) return 'gif';
+  if (normalized.includes('bmp')) return 'bmp';
+  return 'jpg';
+}
+
+async function downloadXhsGoodsAssets({ tasks = [], outputDir, timeout = 30000 } = {}) {
+  try {
+    const downloadable = (Array.isArray(tasks) ? tasks : []).filter(task => task?.downloadable && task?.url);
+    if (!downloadable.length) {
+      return { success: false, error: '没有可直接下载的图片直链，请先打开小红书链接获取图片直链' };
+    }
+
+    const targetDir = outputDir || path.join(app.getPath('documents'), 'AI教辅绘制', '小红书商品图采集');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const results = [];
+    for (const task of downloadable) {
+      try {
+        const response = await axios.get(task.url, {
+          responseType: 'arraybuffer',
+          timeout: Math.max(5000, Math.min(120000, Number(timeout) || 30000)),
+          headers: {
+            'User-Agent': 'Mozilla/5.0 AI-Teaching-Image-Tool/0.0.9',
+            Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+          }
+        });
+        const contentType = response.headers?.['content-type'] || '';
+        if (!String(contentType).toLowerCase().startsWith('image/')) {
+          throw new Error(`返回内容不是图片: ${contentType || 'unknown'}`);
+        }
+        const ext = path.extname(task.fileName || '').replace('.', '') || getExtensionFromContentType(contentType);
+        const baseName = path.basename(task.fileName || `商品图_${task.index || results.length + 1}`, path.extname(task.fileName || ''));
+        const outputPath = path.join(targetDir, `${sanitizeFileName(baseName, '商品图')}.${ext}`);
+        fs.writeFileSync(outputPath, Buffer.from(response.data));
+        results.push({ ...task, success: true, outputPath });
+      } catch (error) {
+        results.push({ ...task, success: false, error: error.message });
+      }
+    }
+
+    const successCount = results.filter(item => item.success).length;
+    const failCount = results.length - successCount;
+    addLog(`小红书商品图直链下载完成: 成功${successCount}张，失败${failCount}张`, failCount ? 'WARN' : 'INFO', 'XhsDownload');
+    return {
+      success: successCount > 0,
+      outputDir: targetDir,
+      successCount,
+      failCount,
+      totalCount: results.length,
+      results,
+      error: successCount > 0 ? undefined : '所有直链图片下载失败'
+    };
+  } catch (error) {
+    addLog(`小红书商品图下载失败: ${error.message}`, 'ERROR', 'XhsDownload');
+    return { success: false, error: error.message };
+  }
+}
+
 // ==================== 百宝箱：视频处理 ====================
 
+function getValidatedFfmpegPath() {
+  return resolveFfmpegPath({
+    configuredPath: configStore?.get('config')?.tools?.ffmpegPath
+  });
+}
+
 // 图片转视频
-async function imagesToVideo(imagePaths, durationPerImage = 2) {
+async function imagesToVideo(imagePaths, durationPerImage = 2, options = {}) {
   try {
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
     const ffmpeg = require('fluent-ffmpeg');
     ffmpeg.setFfmpegPath(ffmpegPath);
 
-    const outputDir = path.join(path.dirname(imagePaths[0]), 'video_output');
+    const safeImages = Array.isArray(imagePaths) ? imagePaths.filter(Boolean) : [];
+    if (!safeImages.length) {
+      return { success: false, error: '请选择至少1张图片' };
+    }
+    const outputDir = path.join(path.dirname(safeImages[0]), 'video_output');
     fs.mkdirSync(outputDir, { recursive: true });
     const outputPath = path.join(outputDir, `video_${Date.now()}.mp4`);
+    const graph = buildVideoFilterGraph({
+      imageCount: safeImages.length,
+      durationPerImage,
+      mode: options.mode,
+      transition: options.transition,
+      resolution: options.resolution
+    });
 
-    return new Promise((resolve, reject) => {
-      const proc = ffmpeg()
-        .input(imagePaths[0])
-        .inputOptions('-loop', '1')
-        .inputOptions('-t', String(durationPerImage))
-        .outputOptions('-vf', `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2`)
+    return new Promise((resolve) => {
+      const command = ffmpeg();
+      safeImages.forEach(imagePath => command.input(imagePath));
+
+      command
+        .complexFilter(graph.filter, graph.outputLabel)
         .outputOptions('-c:v', 'libx264')
         .outputOptions('-pix_fmt', 'yuv420p')
-        .outputOptions('-r', '30')
+        .outputOptions('-r', String(graph.fps))
+        .outputOptions('-movflags', '+faststart')
         .output(outputPath)
         .on('end', () => {
           addLog(`视频生成成功: ${path.basename(outputPath)}`, 'INFO', 'Video');
-          resolve({ success: true, outputPath, outputDir });
+          resolve({ success: true, outputPath, outputDir, mode: graph.mode, transition: graph.transition });
         })
         .on('error', (err) => {
           addLog(`视频生成失败: ${err.message}`, 'ERROR', 'Video');
@@ -1832,7 +2658,7 @@ async function imagesToVideo(imagePaths, durationPerImage = 2) {
 // 视频截取
 async function trimVideo(inputPath, startTime, endTime) {
   try {
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
     const ffmpeg = require('fluent-ffmpeg');
     ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -1871,7 +2697,7 @@ function calculateDuration(start, end) {
 // 视频添加移动水印
 async function addVideoWatermark(inputPath, text, movePath = 'diagonal') {
   try {
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
     const ffmpeg = require('fluent-ffmpeg');
     ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -1916,7 +2742,7 @@ async function addVideoWatermark(inputPath, text, movePath = 'diagonal') {
 // 视频换背景
 async function replaceVideoBackground(videoPath, backgroundPath) {
   try {
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
     const ffmpeg = require('fluent-ffmpeg');
     ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -1948,7 +2774,7 @@ async function replaceVideoBackground(videoPath, backgroundPath) {
 // 视频转GIF
 async function videoToGif(inputPath, width = 480, fps = 15) {
   try {
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
     const ffmpeg = require('fluent-ffmpeg');
     ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -2017,7 +2843,7 @@ async function checkLibreOfficeInstalled() {
 }
 
 // PDF转图片
-async function pdfToImages(inputPath) {
+async function pdfToImages(inputPath, options = {}) {
   try {
     const outputDir = path.join(path.dirname(inputPath), 'pdf_images');
     fs.mkdirSync(outputDir, { recursive: true });
@@ -2026,7 +2852,8 @@ async function pdfToImages(inputPath) {
     const loCheck = await checkLibreOfficeInstalled();
     if (loCheck.installed) {
       const { execSync } = require('child_process');
-      const cmd = `"${loCheck.path}\\program\\soffice.exe" --headless --convert-to png --outdir "${outputDir}" "${inputPath}"`;
+      const soffice = getLibreOfficeExecutable(loCheck.path);
+      const cmd = `"${soffice}" --headless --convert-to png --outdir "${outputDir}" "${inputPath}"`;
       execSync(cmd, { timeout: 60000 });
     } else {
       // 备用方案：使用sharp处理（仅支持单页）
@@ -2034,9 +2861,47 @@ async function pdfToImages(inputPath) {
       await sharp(inputPath).png().toFile(outputPath);
     }
 
-    const files = fs.readdirSync(outputDir).filter(f => f.endsWith('.png'));
-    addLog(`PDF转图片成功: ${files.length} 页`, 'INFO', 'PdfToImages');
-    return { success: true, outputDir, pageCount: files.length };
+    let files = fs.readdirSync(outputDir).filter(f => f.endsWith('.png')).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const selectedPages = Array.isArray(options.pages) ? options.pages.map(Number).filter(page => page > 0) : [];
+    const selectedSet = new Set(selectedPages);
+    const selectedFiles = selectedSet.size
+      ? files.filter((file, index) => selectedSet.has(index + 1))
+      : files;
+
+    for (const file of files) {
+      if (!selectedFiles.includes(file)) {
+        fs.rmSync(path.join(outputDir, file), { force: true });
+      }
+    }
+
+    const scale = Math.max(1, Math.min(2, Number(options.scale) || 1));
+    if (scale > 1) {
+      for (const file of selectedFiles) {
+        const filePath = path.join(outputDir, file);
+        const image = sharp(filePath);
+        const metadata = await image.metadata();
+        const buffer = await image
+          .resize(Math.round((metadata.width || 1) * scale), Math.round((metadata.height || 1) * scale), { fit: 'fill' })
+          .png()
+          .toBuffer();
+        fs.writeFileSync(filePath, buffer);
+      }
+    }
+
+    let zipPath = '';
+    if (options.exportZip) {
+      const JSZip = require('jszip');
+      const zip = new JSZip();
+      for (const file of selectedFiles) {
+        const filePath = path.join(outputDir, file);
+        zip.file(file, fs.readFileSync(filePath));
+      }
+      zipPath = path.join(outputDir, `pdf_images_${Date.now()}.zip`);
+      fs.writeFileSync(zipPath, await zip.generateAsync({ type: 'nodebuffer' }));
+    }
+
+    addLog(`PDF转图片成功: ${selectedFiles.length} 页`, 'INFO', 'PdfToImages');
+    return { success: true, outputDir, pageCount: selectedFiles.length, zipPath };
   } catch (error) {
     addLog(`PDF转图片失败: ${error.message}`, 'ERROR', 'PdfToImages');
     return { success: false, error: error.message };
@@ -2060,7 +2925,7 @@ async function pdfToVideo(inputPath, durationPerPage = 3) {
       return { success: false, error: '没有找到转换后的图片' };
     }
 
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
     const ffmpeg = require('fluent-ffmpeg');
     ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -2168,7 +3033,7 @@ async function documentToImagePaths(inputPath, workDir) {
   return { success: true, imagePaths };
 }
 
-async function rewriteDocument(inputPath, mode = 'optimize', outputFormat = 'pptx', config = {}) {
+async function rewriteDocument(inputPath, mode = 'optimize', outputFormat = 'pptx', config = {}, options = {}) {
   try {
     if (!inputPath || !fs.existsSync(inputPath)) {
       return { success: false, error: '文件不存在，请重新选择文件' };
@@ -2183,22 +3048,34 @@ async function rewriteDocument(inputPath, mode = 'optimize', outputFormat = 'ppt
     fs.mkdirSync(workDir, { recursive: true });
     fs.mkdirSync(outputDir, { recursive: true });
 
-    addLog(`开始二创重塑: ${path.basename(inputPath)} (${mode}/${outputFormat})`, 'INFO', 'Rewrite');
+    addLog(`开始二创重塑: ${path.basename(inputPath)} (${mode}/${outputFormat}) 页码:${options.pageRange || '全部'} 比例:${options.ratio || '2:3'}`, 'INFO', 'Rewrite');
     const imageResult = await documentToImagePaths(inputPath, workDir);
     if (!imageResult.success) return imageResult;
+    let imagePaths = imageResult.imagePaths;
+    if (options.pageRange && String(options.pageRange).trim()) {
+      const { parsePageRanges } = await import('../shared/pageRange.mjs');
+      const selectedPages = parsePageRanges(options.pageRange, imageResult.imagePaths.length);
+      if (!selectedPages.length) {
+        return { success: false, error: '页码范围没有匹配到可处理页面' };
+      }
+      imagePaths = selectedPages.map(page => imageResult.imagePaths[page - 1]).filter(Boolean);
+    }
 
     const ext = outputFormat === 'docx' ? 'docx' : 'pptx';
     const outputPath = path.join(outputDir, `${safeBaseName}_二创重塑_${Date.now()}.${ext}`);
     const result = ext === 'docx'
-      ? await ocrExportToDocx(imageResult.imagePaths, outputPath)
-      : await ocrExportToPptx(imageResult.imagePaths, outputPath);
+      ? await ocrExportToDocx(imagePaths, outputPath)
+      : await ocrExportToPptx(imagePaths, outputPath);
 
     if (!result.success) return result;
     return {
       ...result,
-      pageCount: imageResult.imagePaths.length,
+      pageCount: imagePaths.length,
       mode,
-      outputFormat: ext
+      outputFormat: ext,
+      pageRange: options.pageRange || '',
+      ratio: options.ratio || '',
+      preserveOriginal: Boolean(options.preserveOriginal)
     };
   } catch (error) {
     addLog(`二创重塑失败: ${error.message}`, 'ERROR', 'Rewrite');
@@ -2263,6 +3140,75 @@ async function optimizePrompt(simplePrompt, config) {
   }
 }
 
+function imagePathToDataUrl(imagePath) {
+  const ext = path.extname(imagePath).toLowerCase();
+  const mimeType = ext === '.png'
+    ? 'image/png'
+    : (ext === '.webp' ? 'image/webp' : 'image/jpeg');
+  const base64 = fs.readFileSync(imagePath).toString('base64');
+  return `data:${mimeType};base64,${base64}`;
+}
+
+async function analyzeReferenceLayout(imagePaths = [], note = '', config) {
+  try {
+    const refs = (Array.isArray(imagePaths) ? imagePaths : []).filter(Boolean).slice(0, 5);
+    if (refs.length < 3) {
+      return { success: false, error: '请至少选择 3 张参考图' };
+    }
+    if (!config?.api?.token) {
+      return { success: false, error: '请先配置 API Key' };
+    }
+    if (!isOpenAICompatibleProvider(config.api.provider)) {
+      return { success: false, error: '参考图 AI 分析当前支持 OpenAI、LupoAPI、AiHubMix 等 OpenAI 兼容接口' };
+    }
+
+    const apiConfig = getApiConfig(config);
+    const axiosConfig = createAxiosConfig(config, 90000);
+    const content = [
+      {
+        type: 'text',
+        text: [
+          '请分析这些教辅/小红书资料图的共同版式规律，输出一段可直接用于 AI 作图提示词的中文描述。',
+          '重点总结：画布比例、标题层级、分区结构、颜色系统、重点标注方式、留白、边框、贴纸/装饰使用、文字保真要求。',
+          '不要评价图片好坏，不要输出 Markdown，只输出 180-260 字的版式克隆说明。',
+          note ? `用户补充偏好：${note}` : ''
+        ].filter(Boolean).join('\n')
+      },
+      ...refs.map(imagePath => ({
+        type: 'image_url',
+        image_url: { url: imagePathToDataUrl(imagePath) }
+      }))
+    ];
+
+    const response = await axios.post(
+      `${apiConfig.baseURL}/chat/completions`,
+      {
+        model: apiConfig.chatModel || 'gpt-4o',
+        messages: [
+          {
+            role: 'user',
+            content
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 700
+      },
+      axiosConfig
+    );
+
+    const analysis = response.data?.choices?.[0]?.message?.content?.trim();
+    if (!analysis) {
+      return { success: false, error: 'AI 未返回版式分析内容' };
+    }
+    addLog('参考图版式分析完成', 'INFO', 'Template');
+    return { success: true, analysis };
+  } catch (error) {
+    const errorMsg = error.response?.data?.error?.message || error.message;
+    addLog(`参考图版式分析失败: ${errorMsg}`, 'ERROR', 'Template');
+    return { success: false, error: errorMsg };
+  }
+}
+
 // ==================== 模板库 ====================
 
 function getTemplatesFilePath() {
@@ -2288,13 +3234,31 @@ function saveTemplatesToFile(templates) {
 // ==================== 智能OCR导出 ====================
 
 // OCR识别图片中的文字
-async function ocrExtractText(imagePath) {
+async function ocrExtractText(imagePath, options = {}) {
   try {
     const { createWorker } = require('tesseract.js');
     const worker = await createWorker('chi_sim+eng'); // 中文+英文
-    const { data: { text, words } } = await worker.recognize(imagePath);
+    const { data } = await worker.recognize(imagePath);
     await worker.terminate();
-    return { success: true, text, words };
+
+    let text = data.text || '';
+    let words = data.words || [];
+    const regions = Array.isArray(options.regions) ? options.regions : [];
+    if (regions.length > 0) {
+      const metadata = await sharp(imagePath).metadata();
+      const filteredWords = filterOcrWordsByRegions(words, regions, metadata);
+      const filteredText = textFromOcrWords(filteredWords);
+      addLog(`OCR区域过滤: ${words.length} 个词块 -> ${filteredWords.length} 个词块`, 'INFO', 'OCR');
+      text = filteredText;
+      words = filteredWords;
+    }
+
+    return {
+      success: true,
+      text,
+      words,
+      regionSummary: describeRecognitionRegions(regions, { action: 'ocr' })
+    };
   } catch (error) {
     addLog(`OCR识别失败: ${error.message}`, 'ERROR', 'OCR');
     return { success: false, error: error.message };
@@ -2362,6 +3326,73 @@ async function qualityCheckImage(sourceImage, generatedImage) {
     };
   } catch (error) {
     addLog(`OCR质检失败: ${error.message}`, 'ERROR', 'Quality');
+    return { success: false, error: error.message };
+  }
+}
+
+async function estimateImageSharpness(imagePath) {
+  try {
+    const { data } = await sharp(imagePath)
+      .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
+      .greyscale()
+      .convolve({
+        width: 3,
+        height: 3,
+        kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1]
+      })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    if (!data?.length) return 0;
+    let total = 0;
+    for (const value of data) {
+      total += Math.abs(value - 128);
+    }
+    return total / data.length;
+  } catch {
+    return 0;
+  }
+}
+
+async function visualQualityCheckImage(imagePath, targetRatio = '3:4') {
+  try {
+    if (!imagePath) {
+      return { success: false, error: '缺少需要质检的图片' };
+    }
+
+    const image = sharp(imagePath);
+    const metadata = await image.metadata();
+    const stats = await image.stats();
+    const channels = (stats.channels || []).slice(0, 3);
+    const brightness = channels.length
+      ? channels.reduce((sum, channel) => sum + (channel.mean || 0), 0) / channels.length / 255
+      : 0.5;
+    const contrast = channels.length
+      ? channels.reduce((sum, channel) => sum + (channel.stdev || 0), 0) / channels.length / 255
+      : 0.2;
+    const sharpness = await estimateImageSharpness(imagePath);
+    const { evaluateVisualQualityMetrics } = await import('../renderer/src/utils/visualQualityWorkflow.mjs');
+    const result = evaluateVisualQualityMetrics({
+      width: metadata.width,
+      height: metadata.height,
+      brightness,
+      contrast,
+      sharpness
+    }, { targetRatio });
+
+    addLog(
+      `视觉质检完成: ${path.basename(imagePath)}，得分 ${result.score}，${result.needsReview ? '需复查' : '通过'}`,
+      result.needsReview ? 'WARN' : 'INFO',
+      'Quality'
+    );
+
+    return {
+      success: true,
+      ...result,
+      width: metadata.width,
+      height: metadata.height
+    };
+  } catch (error) {
+    addLog(`视觉质检失败: ${error.message}`, 'ERROR', 'Quality');
     return { success: false, error: error.message };
   }
 }
@@ -2456,6 +3487,222 @@ async function ocrExportToPptx(imagePaths, outputPath) {
     return { success: true, outputPath: finalOutputPath, outputDir };
   } catch (error) {
     addLog(`OCR导出失败: ${error.message}`, 'ERROR', 'OCR');
+    return { success: false, error: error.message };
+  }
+}
+
+function getSeparationOutputRoot(config) {
+  const configured = config?.output?.finalOutputDir || config?.output?.rawOutputDir;
+  if (configured) return configured;
+  return path.join(app.getPath('documents'), 'AI教辅绘制', '图文分离输出');
+}
+
+function sanitizeFileName(name, fallback = '图文分离导出') {
+  const value = String(name || fallback).trim() || fallback;
+  return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 80);
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function percentToPixels(value, max, fallback = 0) {
+  return Math.round((toFiniteNumber(value, fallback) / 100) * max);
+}
+
+function normalizeOpacity(opacity) {
+  return Math.min(1, Math.max(0.01, toFiniteNumber(opacity, 100) / 100));
+}
+
+function colorForPptx(color) {
+  return String(color || '#111827').replace('#', '').toUpperCase();
+}
+
+function layerRect(layer, width, height) {
+  const x = percentToPixels(layer.x, width);
+  const y = percentToPixels(layer.y, height);
+  const w = Math.max(1, percentToPixels(layer.width, width, 10));
+  const h = Math.max(1, percentToPixels(layer.height, height, 5));
+  return { x, y, w, h };
+}
+
+function createSeparationOverlaySvg(layers = [], width, height, options = {}) {
+  const includeText = options.includeText !== false;
+  const svgParts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+  ];
+
+  for (const layer of layers.filter(item => item && item.visible !== false)) {
+    if (layer.type === 'mask' || layer.type === 'brush') {
+      const rect = layerRect(layer, width, height);
+      const rx = layer.radius === 999
+        ? Math.min(rect.w, rect.h) / 2
+        : Math.max(0, toFiniteNumber(layer.radius, 0)) * Math.min(width, height) / 100;
+      svgParts.push(
+        `<rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" rx="${rx}" ry="${rx}" fill="${escapeXml(layer.fill || '#ffffff')}" fill-opacity="${normalizeOpacity(layer.opacity)}"/>`
+      );
+      continue;
+    }
+
+    if (includeText && layer.type === 'text') {
+      const rect = layerRect(layer, width, height);
+      const fontSize = Math.max(8, toFiniteNumber(layer.fontSize, 18));
+      const lineHeight = fontSize * 1.25;
+      const align = ['center', 'right'].includes(layer.align) ? layer.align : 'left';
+      const anchor = align === 'center' ? 'middle' : (align === 'right' ? 'end' : 'start');
+      const textX = align === 'center' ? rect.x + rect.w / 2 : (align === 'right' ? rect.x + rect.w : rect.x);
+      const lines = String(layer.text || '').split(/\r?\n/).filter(Boolean);
+
+      lines.forEach((line, index) => {
+        svgParts.push(
+          `<text x="${textX}" y="${rect.y + fontSize + index * lineHeight}" font-family="${escapeXml(layer.fontFamily || 'Microsoft YaHei')}" font-size="${fontSize}" font-weight="${escapeXml(layer.fontWeight || '500')}" fill="${escapeXml(layer.color || '#111827')}" text-anchor="${anchor}">${escapeXml(line)}</text>`
+        );
+      });
+    }
+  }
+
+  svgParts.push('</svg>');
+  return Buffer.from(svgParts.join(''));
+}
+
+async function renderSeparationPage(page, outputDir, options = {}) {
+  if (!page?.imagePath || !fs.existsSync(page.imagePath)) {
+    throw new Error(`图片不存在: ${page?.name || page?.imagePath || '未知图片'}`);
+  }
+
+  const metadata = await sharp(page.imagePath).metadata();
+  const width = metadata.width || 1080;
+  const height = metadata.height || 1440;
+  const safeName = sanitizeFileName(path.basename(page.name || page.imagePath, path.extname(page.name || page.imagePath)));
+  const outputPath = path.join(outputDir, `${String(options.index || 1).padStart(3, '0')}_${safeName}.png`);
+  const overlay = createSeparationOverlaySvg(page.layers || [], width, height, { includeText: options.includeText !== false });
+
+  await sharp(page.imagePath)
+    .rotate()
+    .composite([{ input: overlay, left: 0, top: 0 }])
+    .png()
+    .toFile(outputPath);
+
+  return { outputPath, width, height };
+}
+
+async function renderSeparationPages(pages, outputDir, options = {}) {
+  fs.mkdirSync(outputDir, { recursive: true });
+  const rendered = [];
+
+  for (let i = 0; i < pages.length; i++) {
+    addLog(`渲染图文分离页面 ${i + 1}/${pages.length}: ${pages[i].name || path.basename(pages[i].imagePath)}`, 'INFO', 'Separation');
+    rendered.push(await renderSeparationPage(pages[i], outputDir, {
+      ...options,
+      index: i + 1
+    }));
+  }
+
+  return rendered;
+}
+
+async function exportSeparationPptx(pages, outputDir, outputName) {
+  const PptxGenJS = require('pptxgenjs');
+  const backgrounds = await renderSeparationPages(pages, path.join(outputDir, 'ppt_backgrounds'), { includeText: false });
+  const pptx = new PptxGenJS();
+  const first = backgrounds[0];
+  const isLandscape = first.width >= first.height;
+  const slideWidth = isLandscape ? 13.333 : Math.max(5.5, Math.min(8, 10 * first.width / first.height));
+  const slideHeight = isLandscape ? Math.max(7.5, Math.min(10, 13.333 * first.height / first.width)) : 10;
+
+  pptx.defineLayout({ name: 'SEPARATION_LAYOUT', width: slideWidth, height: slideHeight });
+  pptx.layout = 'SEPARATION_LAYOUT';
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const bg = backgrounds[i];
+    const slide = pptx.addSlide();
+    slide.addImage({
+      path: bg.outputPath,
+      x: 0,
+      y: 0,
+      w: slideWidth,
+      h: slideHeight
+    });
+
+    for (const layer of (page.layers || []).filter(item => item?.visible !== false && item.type === 'text')) {
+      slide.addText(String(layer.text || ''), {
+        x: (toFiniteNumber(layer.x, 0) / 100) * slideWidth,
+        y: (toFiniteNumber(layer.y, 0) / 100) * slideHeight,
+        w: Math.max(0.1, (toFiniteNumber(layer.width, 30) / 100) * slideWidth),
+        h: Math.max(0.1, (toFiniteNumber(layer.height, 6) / 100) * slideHeight),
+        fontFace: layer.fontFamily || 'Microsoft YaHei',
+        fontSize: Math.max(8, toFiniteNumber(layer.fontSize, 18)),
+        bold: String(layer.fontWeight || '') === '700',
+        color: colorForPptx(layer.color),
+        align: layer.align || 'left',
+        valign: 'mid',
+        margin: 0
+      });
+    }
+  }
+
+  const outputPath = path.join(outputDir, `${sanitizeFileName(outputName)}_${Date.now()}.pptx`);
+  await pptx.writeFile({ fileName: outputPath });
+  return { success: true, outputPath, outputDir, pageCount: pages.length, backgroundPaths: backgrounds.map(item => item.outputPath) };
+}
+
+async function exportSeparationWorkspace(params = {}, config = {}) {
+  try {
+    const pages = Array.isArray(params.pages) ? params.pages.filter(page => page?.imagePath) : [];
+    if (pages.length === 0) {
+      return { success: false, error: '没有可导出的图文分离页面' };
+    }
+
+    const format = ['images', 'pptx', 'docx', 'pdf'].includes(params.format) ? params.format : 'images';
+    const outputName = sanitizeFileName(params.outputName || '图文分离导出');
+    const outputRoot = getSeparationOutputRoot(config);
+    const outputDir = path.join(outputRoot, '图文分离', `${outputName}_${Date.now()}`);
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    addLog(`开始图文分离导出: ${pages.length} 页, 格式 ${format}`, 'INFO', 'Separation');
+
+    if (format === 'pptx') {
+      const result = await exportSeparationPptx(pages, outputDir, outputName);
+      addLog(`图文分离PPT导出成功: ${path.basename(result.outputPath)}`, 'INFO', 'Separation');
+      return result;
+    }
+
+    const rendered = await renderSeparationPages(pages, path.join(outputDir, 'images'), { includeText: true });
+    const imagePaths = rendered.map(item => item.outputPath);
+
+    if (format === 'docx') {
+      const docxPath = path.join(outputDir, `${outputName}_${Date.now()}.docx`);
+      const result = await ocrExportToDocx(imagePaths, docxPath);
+      if (!result.success) return result;
+      addLog(`图文分离Word导出成功: ${path.basename(result.outputPath)}`, 'INFO', 'Separation');
+      return { ...result, imagePaths, pageCount: imagePaths.length };
+    }
+
+    if (format === 'pdf') {
+      const pdfPath = path.join(outputDir, `${outputName}_${Date.now()}.pdf`);
+      await imagesToSimplePdf(imagePaths, pdfPath);
+      addLog(`图文分离PDF导出成功: ${path.basename(pdfPath)}`, 'INFO', 'Separation');
+      return {
+        success: true,
+        outputPath: pdfPath,
+        outputDir,
+        imagePaths,
+        pageCount: imagePaths.length
+      };
+    }
+
+    addLog(`图文分离图片导出成功: ${imagePaths.length} 张`, 'INFO', 'Separation');
+    return {
+      success: true,
+      outputPath: imagePaths[0],
+      outputPaths: imagePaths,
+      outputDir: path.dirname(imagePaths[0]),
+      pageCount: imagePaths.length
+    };
+  } catch (error) {
+    addLog(`图文分离导出失败: ${error.message}`, 'ERROR', 'Separation');
     return { success: false, error: error.message };
   }
 }
@@ -2599,7 +3846,7 @@ async function ocrExportToDocx(imagePaths, outputPath) {
 // ==================== 智能去字/提取底图 ====================
 
 // 智能去字：使用AI去除图片中的文字，保留纯背景图
-async function removeTextFromImage(inputPath, config) {
+async function removeTextFromImage(inputPath, config, options = {}) {
   try {
     const imageBuffer = fs.readFileSync(inputPath);
     const ext = path.extname(inputPath).toLowerCase();
@@ -2614,6 +3861,10 @@ async function removeTextFromImage(inputPath, config) {
     delete axiosConfig.headers['Content-Type'];
 
     const requestBody = new FormData();
+    const regionPrompt = describeRecognitionRegions(options.regions, { action: 'removeText' });
+    if (regionPrompt) {
+      addLog(`智能去字使用区域约束: ${options.regions.length} 个区域`, 'INFO', 'RemoveText');
+    }
     requestBody.append('model', apiConfig.imageModel);
     requestBody.append('prompt', `请去除这张图片中的所有文字内容，只保留纯净的背景图/底图。
 要求：
@@ -2621,7 +3872,7 @@ async function removeTextFromImage(inputPath, config) {
 2. 保留原始背景、图案、装饰元素
 3. 被文字遮挡的区域用周围的背景自然填充
 4. 保持图片整体风格和色调一致
-5. 输出一张干净的、没有文字的背景图`);
+5. 输出一张干净的、没有文字的背景图${regionPrompt ? `\n\n${regionPrompt}` : ''}`);
     requestBody.append('image', new Blob([imageBuffer], { type: mimeType }), path.basename(inputPath));
     requestBody.append('size', '1024x1536');
     requestBody.append('quality', 'high');
@@ -2634,8 +3885,20 @@ async function removeTextFromImage(inputPath, config) {
       axiosConfig
     );
 
+    const imageData = await resolveImageDataFromGenerationResponse(response, apiConfig, axiosConfig, config, 'RemoveText');
+    let outputBuffer;
+    if (imageData.type === 'url') {
+      const imageResponse = await axios.get(imageData.value, {
+        responseType: 'arraybuffer',
+        timeout: 120000
+      });
+      outputBuffer = Buffer.from(imageResponse.data);
+    } else {
+      outputBuffer = Buffer.from(imageData.value, 'base64');
+    }
+
     const outputPath = inputPath.replace(/(\.\w+)$/, '_nobg$1');
-    fs.writeFileSync(outputPath, Buffer.from(response.data.data[0].b64_json, 'base64'));
+    fs.writeFileSync(outputPath, outputBuffer);
 
     const outputDir = path.dirname(outputPath);
     addLog(`智能去字成功: ${path.basename(outputPath)}`, 'INFO', 'RemoveText');
@@ -2682,8 +3945,20 @@ async function extractBackground(inputPath, config) {
       axiosConfig
     );
 
+    const imageData = await resolveImageDataFromGenerationResponse(response, apiConfig, axiosConfig, config, 'ExtractBg');
+    let outputBuffer;
+    if (imageData.type === 'url') {
+      const imageResponse = await axios.get(imageData.value, {
+        responseType: 'arraybuffer',
+        timeout: 120000
+      });
+      outputBuffer = Buffer.from(imageResponse.data);
+    } else {
+      outputBuffer = Buffer.from(imageData.value, 'base64');
+    }
+
     const outputPath = inputPath.replace(/(\.\w+)$/, '_extracted_bg$1');
-    fs.writeFileSync(outputPath, Buffer.from(response.data.data[0].b64_json, 'base64'));
+    fs.writeFileSync(outputPath, outputBuffer);
 
     const outputDir = path.dirname(outputPath);
     addLog(`底图提取成功: ${path.basename(outputPath)}`, 'INFO', 'ExtractBg');
@@ -3040,8 +4315,13 @@ async function createCollageAdvanced(imagePaths, layout = '2x1', options = {}) {
 
     const cellWidth = Math.max(...images.map(i => i.width));
     const cellHeight = Math.max(...images.map(i => i.height));
-    const totalWidth = cellWidth * cols;
-    const totalHeight = cellHeight * rows;
+    const gap = Math.max(0, Math.min(120, Number(options.gap) || 0));
+    const borderWidth = Math.max(0, Math.min(40, Number(options.borderWidth) || 0));
+    const scale = Math.max(1, Math.min(2, Number(options.scale) || 1));
+    const background = /^#[0-9a-f]{6}$/i.test(options.background || '') ? options.background : '#ffffff';
+    const borderColor = /^#[0-9a-f]{6}$/i.test(options.borderColor || '') ? options.borderColor : '#e2e8f0';
+    const totalWidth = cellWidth * cols + gap * Math.max(0, cols - 1) + borderWidth * 2 * cols;
+    const totalHeight = cellHeight * rows + gap * Math.max(0, rows - 1) + borderWidth * 2 * rows;
 
     const composites = [];
     for (let i = 0; i < imagePaths.length && i < cols * rows; i++) {
@@ -3049,13 +4329,21 @@ async function createCollageAdvanced(imagePaths, layout = '2x1', options = {}) {
       const row = Math.floor(i / cols);
 
       // 支持竖排模式
-      let left = col * cellWidth;
-      let top = row * cellHeight;
+      let left = col * (cellWidth + gap + borderWidth * 2) + borderWidth;
+      let top = row * (cellHeight + gap + borderWidth * 2) + borderWidth;
 
       if (options.verticalText) {
         // 竖排模式：每行一个字
-        left = col * cellWidth;
-        top = row * (cellHeight / rows);
+        left = col * (cellWidth + gap + borderWidth * 2) + borderWidth;
+        top = row * ((cellHeight + gap + borderWidth * 2) / rows) + borderWidth;
+      }
+
+      if (borderWidth > 0) {
+        composites.push({
+          input: Buffer.from(`<svg width="${cellWidth + borderWidth * 2}" height="${cellHeight + borderWidth * 2}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="0" fill="${borderColor}"/></svg>`),
+          left: left - borderWidth,
+          top: top - borderWidth
+        });
       }
 
       composites.push({
@@ -3070,10 +4358,11 @@ async function createCollageAdvanced(imagePaths, layout = '2x1', options = {}) {
         width: totalWidth,
         height: totalHeight,
         channels: 4,
-        background: { r: 255, g: 255, b: 255, alpha: 1 }
+        background
       }
     })
       .composite(composites)
+      .resize(Math.round(totalWidth * scale), Math.round(totalHeight * scale), { fit: 'fill' })
       .png()
       .toBuffer();
 
@@ -3148,7 +4437,7 @@ async function pdfToVideoAdvanced(inputPath, durationPerPage = 2, maxPages = 60)
     const listFile = path.join(imagesDir, 'filelist.txt');
     fs.writeFileSync(listFile, inputList);
 
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
     const videoCmd = `"${ffmpegPath}" -y -f concat -safe 0 -i "${listFile}" -vf "fps=1/${durationPerPage}" -c:v libx264 -pix_fmt yuv420p "${outputPath}"`;
     await execPromise(videoCmd);
 
@@ -3167,7 +4456,7 @@ async function videoGreenScreen(videoPath, backgroundPath) {
     fs.mkdirSync(outputDir, { recursive: true });
 
     const outputPath = path.join(outputDir, path.basename(videoPath, path.extname(videoPath)) + '_bg.mp4');
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = getValidatedFfmpegPath();
 
     const cmd = `"${ffmpegPath}" -y -i "${videoPath}" -i "${backgroundPath}" -filter_complex "[0:v]chromakey=0x00FF00:0.3:0.2[fg];[1:v][fg]overlay=0:0:shortest=1" -c:v libx264 -pix_fmt yuv420p "${outputPath}"`;
     await execPromise(cmd);

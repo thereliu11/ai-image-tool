@@ -12,7 +12,7 @@ export default defineConfig({
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
-    minify: 'esbuild',
+    minify: false,
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       onwarn(warning, warn) {

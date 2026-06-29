@@ -28,7 +28,16 @@
         <div class="tool-section">
           <h3>1. 图片加水印</h3>
           <div class="tool-row">
-            <el-input v-model="watermarkText" placeholder="输入水印文字" style="width: 300px" />
+            <el-segmented v-model="watermarkMode" :options="watermarkModeOptions" />
+            <el-input v-if="watermarkMode === 'text'" v-model="watermarkText" placeholder="输入水印文字" style="width: 240px" />
+            <el-button v-else @click="selectWatermarkLogo">选择Logo</el-button>
+            <span v-if="watermarkLogoPath" class="file-selected">已选择Logo</span>
+            <el-select v-model="watermarkFontFamily" placeholder="字体" style="width: 140px">
+              <el-option label="微软雅黑" value="Microsoft YaHei" />
+              <el-option label="宋体" value="SimSun" />
+              <el-option label="黑体" value="SimHei" />
+              <el-option label="楷体" value="KaiTi" />
+            </el-select>
             <el-select v-model="watermarkPosition" placeholder="位置" style="width: 120px">
               <el-option label="右下角" value="bottom-right" />
               <el-option label="左下角" value="bottom-left" />
@@ -60,7 +69,18 @@
               <el-option label="2x2网格" value="2x2" />
               <el-option label="3x3网格" value="3x3" />
             </el-select>
-            <el-button type="primary" @click="handleCollage" :loading="processing">生成拼图</el-button>
+            <el-select v-model="collageScale" placeholder="清晰度" style="width: 120px">
+              <el-option label="标准" :value="1" />
+              <el-option label="2倍超清" :value="2" />
+            </el-select>
+            <span>间距</span>
+            <el-input-number v-model="collageGap" :min="0" :max="120" :step="4" size="small" style="width: 110px" />
+            <span>边框</span>
+            <el-input-number v-model="collageBorderWidth" :min="0" :max="40" :step="1" size="small" style="width: 100px" />
+            <el-color-picker v-model="collageBorderColor" />
+            <el-color-picker v-model="collageBackground" />
+            <el-checkbox v-model="collageExportZip">ZIP</el-checkbox>
+            <el-button type="primary" @click="handleCollage" :loading="processing">生成高级拼图</el-button>
           </div>
         </div>
 
@@ -74,18 +94,123 @@
           <div v-if="bgImagePath" class="bg-preview">
             <img :src="getFilePathSrc(bgImagePath)" alt="背景图" />
           </div>
+          <div v-if="bgHistory.length" class="bg-history">
+            <span>最近背景</span>
+            <el-button
+              v-for="bg in bgHistory.slice(0, 6)"
+              :key="bg.path"
+              size="small"
+              @click="bgImagePath = bg.path"
+            >
+              {{ bg.name }}
+            </el-button>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>5. 场景化图片排版</h3>
+          <div class="scene-compose-panel">
+            <div class="tool-row">
+              <el-button @click="selectSceneBackground">选择场景背景</el-button>
+              <span v-if="sceneBackgroundPath" class="file-selected">已选择背景</span>
+              <el-button @click="selectSceneOverlay">选择嵌入图片</el-button>
+              <span v-if="sceneOverlayPath" class="file-selected">已选择嵌入图</span>
+            </div>
+            <div class="tool-row">
+              <el-select v-model="scenePreset" placeholder="场景区域" style="width: 160px">
+                <el-option label="纸张居中" value="paper-center" />
+                <el-option label="手机屏幕" value="phone-screen" />
+                <el-option label="桌面卡片" value="desktop-card" />
+              </el-select>
+              <el-select v-model="sceneFit" placeholder="适配" style="width: 120px">
+                <el-option label="完整显示" value="contain" />
+                <el-option label="铺满裁切" value="cover" />
+                <el-option label="拉伸填满" value="fill" />
+              </el-select>
+              <el-select v-model="sceneBlend" placeholder="混合" style="width: 120px">
+                <el-option label="正常" value="over" />
+                <el-option label="正片叠底" value="multiply" />
+                <el-option label="滤色" value="screen" />
+                <el-option label="叠加" value="overlay" />
+                <el-option label="柔光" value="soft-light" />
+              </el-select>
+              <span>透明度</span>
+              <el-slider v-model="sceneOpacity" :min="10" :max="100" :format-tooltip="v => `${v}%`" style="width: 150px" />
+              <el-button type="primary" @click="handleSceneCompose" :loading="processing">生成场景图</el-button>
+            </div>
+            <div class="scene-preview" v-if="sceneBackgroundPath || sceneOverlayPath">
+              <div v-if="sceneBackgroundPath">
+                <span>背景</span>
+                <img :src="getFilePathSrc(sceneBackgroundPath)" alt="场景背景" />
+              </div>
+              <div v-if="sceneOverlayPath">
+                <span>嵌入图</span>
+                <img :src="getFilePathSrc(sceneOverlayPath)" alt="嵌入图片" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h3>6. 长图切片 / 图片分割</h3>
+          <p class="tip">把长图或宽图切成多张小红书友好的图片，适合资料页、错题页、长笔记分卡导出。</p>
+          <div class="tool-row">
+            <el-select v-model="splitDirection" placeholder="切片方向" style="width: 140px">
+              <el-option label="纵向切长图" value="vertical" />
+              <el-option label="横向切宽图" value="horizontal" />
+            </el-select>
+            <span>单张长度</span>
+            <el-input-number v-model="splitTargetSize" :min="200" :max="4096" :step="50" size="small" style="width: 130px" />
+            <span>重叠</span>
+            <el-input-number v-model="splitOverlap" :min="0" :max="1000" :step="10" size="small" style="width: 110px" />
+            <el-select v-model="splitFormat" placeholder="格式" style="width: 110px">
+              <el-option label="PNG" value="png" />
+              <el-option label="JPEG" value="jpeg" />
+              <el-option label="WebP" value="webp" />
+            </el-select>
+            <el-input v-model="splitOutputName" placeholder="输出名前缀，可留空" style="width: 180px" />
+            <el-button type="primary" @click="handleImageSplit" :loading="processing">选择图片并切片</el-button>
+          </div>
+          <div class="split-presets">
+            <el-button size="small" @click="splitTargetSize = 1365; splitDirection = 'vertical'">小红书 3:4</el-button>
+            <el-button size="small" @click="splitTargetSize = 1024; splitDirection = 'vertical'">方卡 1:1</el-button>
+            <el-button size="small" @click="splitTargetSize = 1920; splitDirection = 'vertical'">高清长页</el-button>
+          </div>
         </div>
       </el-tab-pane>
 
       <!-- 视频处理 -->
       <el-tab-pane label="🎬 视频处理" name="video">
+        <el-alert
+          v-if="!ffmpegInstalled"
+          :title="ffmpegStatusText"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+        />
         <div class="tool-section">
           <h3>5. 图片转视频</h3>
           <div class="tool-row">
+            <el-select v-model="videoMode" placeholder="模式" style="width: 160px">
+              <el-option label="单图滚动" value="single-scroll" />
+              <el-option label="多图滚动" value="multi-scroll" />
+              <el-option label="长图滚动" value="long-scroll" />
+              <el-option label="横向切换" value="horizontal-switch" />
+            </el-select>
             <span>每张停留：</span>
             <el-input-number v-model="videoDuration" :min="1" :max="10" :step="0.5" />
             <span>秒</span>
-            <el-button type="primary" @click="handleImagesToVideo" :loading="processing">生成视频</el-button>
+            <el-select v-model="videoTransition" placeholder="转场" style="width: 120px">
+              <el-option label="无" value="none" />
+              <el-option label="淡入淡出" value="fade" />
+              <el-option label="滑动" value="slide" />
+            </el-select>
+            <el-select v-model="videoResolution" placeholder="分辨率" style="width: 120px">
+              <el-option label="720p" value="720p" />
+              <el-option label="1080p" value="1080p" />
+            </el-select>
+            <el-button type="primary" @click="handleImagesToVideo" :loading="processing" :disabled="!ffmpegInstalled">生成视频</el-button>
           </div>
         </div>
 
@@ -96,7 +221,7 @@
             <el-input v-model="trimStart" placeholder="00:00:00" style="width: 120px" />
             <span>结束：</span>
             <el-input v-model="trimEnd" placeholder="00:00:05" style="width: 120px" />
-            <el-button type="primary" @click="handleVideoTrim" :loading="processing">截取视频</el-button>
+            <el-button type="primary" @click="handleVideoTrim" :loading="processing" :disabled="!ffmpegInstalled">截取视频</el-button>
           </div>
         </div>
 
@@ -109,7 +234,7 @@
               <el-option label="水平来回" value="horizontal" />
               <el-option label="垂直来回" value="vertical" />
             </el-select>
-            <el-button type="primary" @click="handleVideoWatermark" :loading="processing">添加水印</el-button>
+            <el-button type="primary" @click="handleVideoWatermark" :loading="processing" :disabled="!ffmpegInstalled">添加水印</el-button>
           </div>
         </div>
 
@@ -118,7 +243,7 @@
           <div class="tool-row">
             <el-button @click="selectVideoBgImage">选择背景图</el-button>
             <span v-if="videoBgImagePath" class="file-selected">✅ 已选择背景图</span>
-            <el-button type="primary" @click="handleVideoBgReplace" :loading="processing">换背景</el-button>
+            <el-button type="primary" @click="handleVideoBgReplace" :loading="processing" :disabled="!ffmpegInstalled">换背景</el-button>
           </div>
         </div>
 
@@ -129,7 +254,7 @@
             <el-input-number v-model="gifWidth" :min="200" :max="1920" :step="100" />
             <span>帧率：</span>
             <el-input-number v-model="gifFps" :min="5" :max="30" :step="1" />
-            <el-button type="primary" @click="handleVideoToGif" :loading="processing">转GIF</el-button>
+            <el-button type="primary" @click="handleVideoToGif" :loading="processing" :disabled="!ffmpegInstalled">转GIF</el-button>
           </div>
         </div>
       </el-tab-pane>
@@ -147,17 +272,31 @@
         <div class="tool-section">
           <h3>11. PDF转图片</h3>
           <div class="tool-row">
+            <el-input v-model="pdfPageRange" placeholder="页码：如 1-3,5；留空全部" style="width: 220px" />
+            <el-select v-model="pdfImageResolution" placeholder="清晰度" style="width: 120px">
+              <el-option label="标准" value="1x" />
+              <el-option label="2倍超清" value="2x" />
+            </el-select>
+            <el-checkbox v-model="pdfExportZip">导出ZIP</el-checkbox>
             <el-button type="primary" @click="handlePdfToImages" :loading="processing">PDF转图片</el-button>
           </div>
         </div>
 
         <div class="tool-section">
           <h3>12. PDF转视频</h3>
+          <el-alert
+            v-if="!ffmpegInstalled"
+            :title="ffmpegStatusText"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+          />
           <div class="tool-row">
             <span>每页停留：</span>
             <el-input-number v-model="pdfPageDuration" :min="1" :max="10" :step="0.5" />
             <span>秒</span>
-            <el-button type="primary" @click="handlePdfToVideo" :loading="processing">PDF转视频</el-button>
+            <el-button type="primary" @click="handlePdfToVideo" :loading="processing" :disabled="!ffmpegInstalled">PDF转视频</el-button>
           </div>
         </div>
       </el-tab-pane>
@@ -291,6 +430,151 @@
         </div>
       </el-tab-pane>
 
+      <!-- 飞书上传 -->
+      <el-tab-pane label="飞书上传" name="feishu">
+        <div class="tool-section feishu-section">
+          <h3>飞书附件上传任务规划</h3>
+          <p class="tip">把多个素材文件夹按行分配到飞书多维表格附件字段。当前先生成本地预览，真实上传接口保留为下一阶段。</p>
+          <el-alert
+            title="安全提示：这里不会把 Token 发到网络，只用于校验是否已填写。请先核对预览，再接入真实上传。"
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+          />
+
+          <div class="feishu-grid">
+            <el-input v-model="feishuToken" type="password" show-password placeholder="飞书 tenant_access_token / user_access_token（可先留空预览）" />
+            <el-input v-model="feishuBitableUrl" placeholder="飞书多维表格链接，如 https://xxx.feishu.cn/base/app...?table=tbl..." />
+            <el-input v-model="feishuAttachmentField" placeholder="附件字段名称，如 图片附件" />
+            <div class="feishu-row-range">
+              <span>行范围</span>
+              <el-input-number v-model="feishuStartRow" :min="1" :max="999999" size="small" />
+              <span>至</span>
+              <el-input-number v-model="feishuEndRow" :min="1" :max="999999" size="small" />
+            </div>
+          </div>
+
+          <div class="feishu-folder-list">
+            <div
+              v-for="(folder, index) in feishuFolders"
+              :key="folder.id"
+              class="feishu-folder-row"
+            >
+              <el-input v-model="folder.folderPath" placeholder="选择或粘贴素材文件夹路径" />
+              <el-button @click="selectFeishuFolder(index)">选择文件夹</el-button>
+              <el-select v-model="folder.mode" style="width: 110px">
+                <el-option label="顺序" value="sequential" />
+                <el-option label="随机" value="random" />
+              </el-select>
+              <span>每行</span>
+              <el-input-number v-model="folder.countPerRow" :min="1" :max="20" size="small" style="width: 95px" />
+              <span>起点</span>
+              <el-input-number v-model="folder.cursor" :min="0" :max="999999" size="small" style="width: 95px" />
+              <el-button text type="danger" @click="removeFeishuFolder(index)" :disabled="feishuFolders.length === 1">删除</el-button>
+            </div>
+          </div>
+
+          <div class="tool-row">
+            <el-button @click="addFeishuFolder">添加素材文件夹</el-button>
+            <el-button type="primary" @click="handleFeishuPreview" :loading="feishuPlanning">生成上传预览（暂不上传）</el-button>
+          </div>
+
+          <div v-if="feishuPreview" class="feishu-preview-panel">
+            <div class="feishu-summary">
+              <el-tag type="success">行数 {{ feishuPreview.plan.rowCount }}</el-tag>
+              <el-tag>每行 {{ feishuPreview.plan.totalImagesPerRow }} 张</el-tag>
+              <el-tag type="warning">预计 {{ feishuPreview.plan.estimatedUploadCount }} 张</el-tag>
+              <el-tag :type="feishuPreview.plan.tokenProvided ? 'success' : 'info'">
+                {{ feishuPreview.plan.tokenProvided ? '已填写 Token' : '未填写 Token' }}
+              </el-tag>
+              <el-button size="small" @click="copyFeishuManifest">复制上传清单</el-button>
+            </div>
+            <el-alert
+              v-if="feishuPreview.missingFolders.length"
+              :title="`这些文件夹没有可用图片：${feishuPreview.missingFolders.join('、')}`"
+              type="warning"
+              :closable="false"
+              show-icon
+              style="margin: 10px 0"
+            />
+            <div class="feishu-preview-list">
+              <div v-for="row in feishuPreviewRows" :key="row.rowNumber" class="feishu-preview-row">
+                <strong>第 {{ row.rowNumber }} 行</strong>
+                <span v-if="!row.imagePaths.length" class="empty-tip-inline">暂无图片</span>
+                <el-tag
+                  v-for="imagePath in row.imagePaths"
+                  :key="`${row.rowNumber}-${imagePath}`"
+                  size="small"
+                  effect="plain"
+                >
+                  {{ getFileName(imagePath) }}
+                </el-tag>
+              </div>
+            </div>
+            <p v-if="feishuPreview.rows.length > feishuPreviewRows.length" class="tip">
+              只展示前 {{ feishuPreviewRows.length }} 行，完整上传数量以汇总为准。
+            </p>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <!-- 采集下载 -->
+      <el-tab-pane label="采集下载" name="collect">
+        <div class="tool-section collect-section">
+          <h3>小红书商品图采集队列</h3>
+          <p class="tip">粘贴小红书分享文案、短链、笔记链接或图片直链。工具会先生成本地采集队列；只有图片直链会自动下载，笔记页和短链需要手动打开后保存或复制图片直链。</p>
+          <el-alert
+            title="说明：小红书页面常需要登录和浏览器环境，当前不做绕过登录/反爬的抓取；直连图片 URL 可直接下载。"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+          />
+
+          <el-input
+            v-model="xhsShareText"
+            type="textarea"
+            :rows="6"
+            placeholder="粘贴小红书分享文案、短链、笔记链接，或 https://...jpg / .png / .webp 图片直链"
+          />
+
+          <div class="collect-grid">
+            <el-input v-model="xhsFilePrefix" placeholder="文件名前缀，如 七下英语资料图" />
+            <el-input v-model="xhsOutputDir" placeholder="输出文件夹，可留空使用默认目录" />
+            <el-button @click="selectXhsOutputDir">选择输出目录</el-button>
+            <el-button type="primary" @click="handleBuildXhsDownloadPlan">生成采集队列</el-button>
+            <el-button type="success" @click="handleDownloadXhsAssets" :loading="xhsDownloading" :disabled="!xhsDownloadPlan?.downloadableCount">下载直连图片</el-button>
+          </div>
+
+          <div v-if="xhsDownloadPlan" class="collect-preview-panel">
+            <div class="collect-summary">
+              <el-tag>链接 {{ xhsDownloadPlan.totalCount }}</el-tag>
+              <el-tag type="success">可下载 {{ xhsDownloadPlan.downloadableCount }}</el-tag>
+              <el-tag type="warning">需手动 {{ xhsDownloadPlan.manualCount }}</el-tag>
+            </div>
+
+            <div class="collect-task-list">
+              <div v-for="task in xhsDownloadPlan.tasks" :key="task.id" class="collect-task-row">
+                <div class="collect-task-main">
+                  <strong>{{ task.fileName }}</strong>
+                  <span>{{ task.reason }}</span>
+                  <small>{{ task.url }}</small>
+                </div>
+                <el-tag :type="task.downloadable ? 'success' : 'warning'" effect="plain">
+                  {{ task.downloadable ? '可下载' : '手动处理' }}
+                </el-tag>
+                <el-button v-if="!task.downloadable" size="small" @click="openXhsManualTask(task)">打开链接</el-button>
+              </div>
+            </div>
+
+            <p v-if="xhsManualTasks.length" class="tip">
+              手动处理链接打开后，可把图片直链复制回来重新生成队列，再使用“下载直连图片”。
+            </p>
+          </div>
+        </div>
+      </el-tab-pane>
+
       <!-- 模板库 -->
       <el-tab-pane label="📚 模板库" name="templates">
         <div class="tool-section">
@@ -333,6 +617,21 @@
 import { ref, computed, watch } from 'vue'
 import { useAppStore } from '../store/index.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  buildAdvancedWatermarkPayload,
+  buildPdfImagesRequest,
+  buildSceneComposeRequest,
+  buildVideoCreateRequest,
+  normalizeAdvancedCollageRequest
+} from '../utils/toolboxAdvancedWorkflow.mjs'
+import {
+  buildFeishuLocalUploadPreview,
+  buildFeishuUploadManifest,
+  buildFeishuUploadPlan
+} from '../utils/feishuUploadWorkflow.mjs'
+import {
+  buildXhsGoodsDownloadPlan
+} from '../utils/xhsGoodsDownloadWorkflow.mjs'
 
 const props = defineProps({
   modelValue: Boolean
@@ -350,6 +649,9 @@ const visible = computed({
 const activeTab = ref('image')
 const processing = ref(false)
 const libreOfficeInstalled = ref(false)
+const ffmpegStatus = ref({ installed: true, error: '' })
+const ffmpegInstalled = computed(() => ffmpegStatus.value.installed !== false)
+const ffmpegStatusText = computed(() => ffmpegStatus.value.error || 'FFmpeg 不可用，视频相关功能暂不可用')
 
 // 预览相关
 const previewBefore = ref('')
@@ -358,15 +660,43 @@ const previewDialogVisible = ref(false)
 const previewDialogSrc = ref('')
 
 // 图片处理参数
-const watermarkText = ref('AI教辅作图工具')
+const watermarkMode = ref('text')
+const watermarkModeOptions = [
+  { label: '文字水印', value: 'text' },
+  { label: 'Logo水印', value: 'logo' }
+]
+const watermarkText = ref('智绘AI')
+const watermarkLogoPath = ref('')
+const watermarkFontFamily = ref('Microsoft YaHei')
 const watermarkPosition = ref('bottom-right')
 const watermarkOpacity = ref(30)
 const compressQuality = ref(80)
 const collageLayout = ref('2x1')
+const collageScale = ref(1)
+const collageGap = ref(16)
+const collageBorderWidth = ref(0)
+const collageBorderColor = ref('#e2e8f0')
+const collageBackground = ref('#ffffff')
+const collageExportZip = ref(false)
 const bgImagePath = ref('')
+const bgHistory = ref([])
+const sceneBackgroundPath = ref('')
+const sceneOverlayPath = ref('')
+const scenePreset = ref('paper-center')
+const sceneFit = ref('contain')
+const sceneBlend = ref('over')
+const sceneOpacity = ref(100)
+const splitDirection = ref('vertical')
+const splitTargetSize = ref(1365)
+const splitOverlap = ref(0)
+const splitFormat = ref('png')
+const splitOutputName = ref('')
 
 // 视频处理参数
+const videoMode = ref('single-scroll')
 const videoDuration = ref(2)
+const videoTransition = ref('none')
+const videoResolution = ref('1080p')
 const trimStart = ref('00:00:00')
 const trimEnd = ref('00:00:05')
 const videoWatermarkText = ref('AI教辅')
@@ -377,6 +707,9 @@ const gifFps = ref(15)
 
 // 文档处理参数
 const pdfPageDuration = ref(3)
+const pdfPageRange = ref('')
+const pdfImageResolution = ref('1x')
+const pdfExportZip = ref(false)
 
 // 魔法棒参数
 const simplePrompt = ref('')
@@ -387,6 +720,36 @@ const templates = ref([])
 const newTemplateName = ref('')
 const newTemplatePrompt = ref('')
 
+function createFeishuFolderConfig(index = 0) {
+  return {
+    id: `feishu-folder-${Date.now()}-${index}`,
+    folderPath: '',
+    mode: 'sequential',
+    countPerRow: 1,
+    cursor: 0
+  }
+}
+
+// 飞书上传规划参数
+const feishuToken = ref('')
+const feishuBitableUrl = ref('')
+const feishuAttachmentField = ref('图片附件')
+const feishuStartRow = ref(1)
+const feishuEndRow = ref(10)
+const feishuFolders = ref([createFeishuFolderConfig(0)])
+const feishuPreview = ref(null)
+const feishuPlanning = ref(false)
+const feishuPreviewRows = computed(() => feishuPreview.value?.rows?.slice(0, 12) || [])
+
+// 小红书商品图采集参数
+const xhsShareText = ref('')
+const xhsOutputDir = ref('')
+const xhsFilePrefix = ref('商品图')
+const xhsDownloadPlan = ref(null)
+const xhsDownloading = ref(false)
+const xhsDownloadableTasks = computed(() => xhsDownloadPlan.value?.tasks?.filter(task => task.downloadable) || [])
+const xhsManualTasks = computed(() => xhsDownloadPlan.value?.tasks?.filter(task => !task.downloadable) || [])
+
 // 检查LibreOffice
 const checkLibreOffice = async () => {
   try {
@@ -394,6 +757,15 @@ const checkLibreOffice = async () => {
     libreOfficeInstalled.value = result.installed
   } catch (err) {
     libreOfficeInstalled.value = false
+  }
+}
+
+const checkFfmpeg = async () => {
+  try {
+    const result = await window.electronAPI.checkFfmpeg()
+    ffmpegStatus.value = result || { installed: false, error: 'FFmpeg 状态检测失败' }
+  } catch (err) {
+    ffmpegStatus.value = { installed: false, error: err.message || 'FFmpeg 状态检测失败' }
   }
 }
 
@@ -409,10 +781,21 @@ const loadTemplates = async () => {
   }
 }
 
+const loadBgHistory = async () => {
+  try {
+    const result = await window.electronAPI.getBgHistory()
+    bgHistory.value = result?.history || []
+  } catch {
+    bgHistory.value = []
+  }
+}
+
 watch(visible, (val) => {
   if (val) {
     checkLibreOffice()
+    checkFfmpeg()
     loadTemplates()
+    loadBgHistory()
     clearPreview()
   }
 })
@@ -454,6 +837,134 @@ const getFilePathSrc = (filePath) => {
   return ''
 }
 
+const getFileName = (filePath) => {
+  return String(filePath || '').split(/[\\/]/).pop() || filePath
+}
+
+const addFeishuFolder = () => {
+  feishuFolders.value.push(createFeishuFolderConfig(feishuFolders.value.length))
+}
+
+const removeFeishuFolder = (index) => {
+  if (feishuFolders.value.length <= 1) {
+    ElMessage.warning('至少保留一个素材文件夹')
+    return
+  }
+  feishuFolders.value.splice(index, 1)
+  feishuPreview.value = null
+}
+
+const selectFeishuFolder = async (index) => {
+  const folderPath = await getSaveFolder()
+  if (!folderPath) return
+  feishuFolders.value[index].folderPath = folderPath
+  feishuPreview.value = null
+}
+
+const readFeishuFolderImages = async (folderPath) => {
+  const result = await window.electronAPI.importFolderPath(folderPath)
+  if (result?.error) throw new Error(result.error)
+  return (result?.goods || []).map(item => item.referenceImage).filter(Boolean)
+}
+
+const handleFeishuPreview = async () => {
+  feishuPlanning.value = true
+  try {
+    const plan = buildFeishuUploadPlan({
+      token: feishuToken.value,
+      bitableUrl: feishuBitableUrl.value,
+      attachmentField: feishuAttachmentField.value,
+      startRow: feishuStartRow.value,
+      endRow: feishuEndRow.value,
+      folders: feishuFolders.value
+    })
+
+    const folderFilesByPath = {}
+    for (const folder of plan.folders) {
+      folderFilesByPath[folder.folderPath] = await readFeishuFolderImages(folder.folderPath)
+    }
+
+    feishuPreview.value = buildFeishuLocalUploadPreview(plan, folderFilesByPath)
+    if (feishuPreview.value.missingFolders.length) {
+      ElMessage.warning('部分素材文件夹没有可用图片，请检查预览')
+    } else {
+      ElMessage.success('飞书上传预览已生成')
+    }
+  } catch (err) {
+    feishuPreview.value = null
+    ElMessage.error('飞书上传规划失败: ' + err.message)
+  } finally {
+    feishuPlanning.value = false
+  }
+}
+
+const copyFeishuManifest = async () => {
+  if (!feishuPreview.value) {
+    ElMessage.warning('请先生成飞书上传预览')
+    return
+  }
+  const manifest = buildFeishuUploadManifest(feishuPreview.value, {
+    title: '智绘AI飞书上传清单',
+    includeTokenHint: true
+  })
+  await window.electronAPI.writeClipboardText(JSON.stringify(manifest, null, 2))
+  ElMessage.success('飞书上传清单已复制到剪贴板')
+}
+
+const selectXhsOutputDir = async () => {
+  const folderPath = await getSaveFolder()
+  if (!folderPath) return
+  xhsOutputDir.value = folderPath
+}
+
+const handleBuildXhsDownloadPlan = () => {
+  const plan = buildXhsGoodsDownloadPlan({
+    shareText: xhsShareText.value,
+    outputDir: xhsOutputDir.value,
+    filePrefix: xhsFilePrefix.value
+  })
+  xhsDownloadPlan.value = plan
+  if (!plan.totalCount) {
+    ElMessage.warning('没有识别到链接，请粘贴小红书分享文案或图片直链')
+  } else if (!plan.downloadableCount) {
+    ElMessage.warning('已生成队列，但暂未发现可直接下载的图片直链')
+  } else {
+    ElMessage.success(`已识别 ${plan.totalCount} 条链接，可直接下载 ${plan.downloadableCount} 张`)
+  }
+}
+
+const handleDownloadXhsAssets = async () => {
+  if (!xhsDownloadPlan.value) {
+    handleBuildXhsDownloadPlan()
+  }
+  if (!xhsDownloadPlan.value?.downloadableCount) {
+    ElMessage.warning('没有可直接下载的图片直链')
+    return
+  }
+  xhsDownloading.value = true
+  try {
+    const result = await window.electronAPI.xhsGoodsDownload({
+      tasks: xhsDownloadableTasks.value,
+      outputDir: xhsOutputDir.value
+    })
+    if (result.success) {
+      ElMessage.success(`下载完成：成功 ${result.successCount} 张，失败 ${result.failCount} 张`)
+      if (result.outputDir) window.electronAPI.openFolder(result.outputDir)
+    } else {
+      ElMessage.error(result.error || '下载失败')
+    }
+  } catch (err) {
+    ElMessage.error('下载失败: ' + err.message)
+  } finally {
+    xhsDownloading.value = false
+  }
+}
+
+const openXhsManualTask = (task) => {
+  if (!task?.url) return
+  window.electronAPI.openExternal(task.url)
+}
+
 const setPreviewBefore = (filePath) => {
   previewBefore.value = getFilePathSrc(filePath)
 }
@@ -473,19 +984,33 @@ const openPreview = (src) => {
 }
 
 // ========== 图片处理 ==========
+const selectWatermarkLogo = async () => {
+  const filePath = await getFilePath([
+    { name: 'Logo图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+  ])
+  if (filePath) {
+    watermarkLogoPath.value = filePath
+    ElMessage.success('Logo已选择')
+  }
+}
+
 const handleWatermark = async () => {
-  if (!watermarkText.value) return ElMessage.warning('请输入水印文字')
+  if (watermarkMode.value === 'text' && !watermarkText.value) return ElMessage.warning('请输入水印文字')
+  if (watermarkMode.value === 'logo' && !watermarkLogoPath.value) return ElMessage.warning('请先选择Logo图片')
   const filePath = await getFilePath()
   if (!filePath) return
   setPreviewBefore(filePath)
   processing.value = true
   try {
-    const result = await window.electronAPI.imageWatermark({
+    const result = await window.electronAPI.imageWatermark(buildAdvancedWatermarkPayload({
       inputPath: filePath,
+      mode: watermarkMode.value,
       text: watermarkText.value,
+      logoPath: watermarkLogoPath.value,
+      fontFamily: watermarkFontFamily.value,
       position: watermarkPosition.value,
       opacity: watermarkOpacity.value
-    })
+    }))
     if (result.success) {
       setPreviewAfter(result.outputPath)
       // 确认对话框
@@ -542,10 +1067,17 @@ const handleCollage = async () => {
   if (!filePaths || filePaths.length < 2) return ElMessage.warning('请选择至少2张图片')
   processing.value = true
   try {
-    const result = await window.electronAPI.imageCollage({
+    const request = normalizeAdvancedCollageRequest({
       imagePaths: filePaths,
-      layout: collageLayout.value
+      layout: collageLayout.value,
+      scale: collageScale.value,
+      gap: collageGap.value,
+      borderWidth: collageBorderWidth.value,
+      borderColor: collageBorderColor.value,
+      background: collageBackground.value,
+      exportZip: collageExportZip.value
     })
+    const result = await window.electronAPI.imageCollageAdvanced(request)
     if (result.success) {
       setPreviewAfter(result.outputPath)
       try {
@@ -565,6 +1097,12 @@ const selectBgImage = async () => {
   const filePath = await getFilePath()
   if (filePath) {
     bgImagePath.value = filePath
+    try {
+      const result = await window.electronAPI.addBgHistory({ imagePath: filePath })
+      bgHistory.value = result?.history || bgHistory.value
+    } catch {
+      // 背景历史只是便捷功能，失败不影响换图主流程。
+    }
     ElMessage.success('背景图已选择')
   }
 }
@@ -593,16 +1131,88 @@ const handleBgReplace = async () => {
   processing.value = false
 }
 
+const selectSceneBackground = async () => {
+  const filePath = await getFilePath()
+  if (filePath) {
+    sceneBackgroundPath.value = filePath
+    ElMessage.success('场景背景已选择')
+  }
+}
+
+const selectSceneOverlay = async () => {
+  const filePath = await getFilePath()
+  if (filePath) {
+    sceneOverlayPath.value = filePath
+    ElMessage.success('嵌入图片已选择')
+  }
+}
+
+const handleSceneCompose = async () => {
+  if (!sceneBackgroundPath.value) return ElMessage.warning('请先选择场景背景')
+  if (!sceneOverlayPath.value) return ElMessage.warning('请先选择嵌入图片')
+  setPreviewBefore(sceneBackgroundPath.value)
+  processing.value = true
+  try {
+    const result = await window.electronAPI.imageSceneCompose(buildSceneComposeRequest({
+      backgroundPath: sceneBackgroundPath.value,
+      overlayPath: sceneOverlayPath.value,
+      preset: scenePreset.value,
+      opacity: sceneOpacity.value,
+      blend: sceneBlend.value,
+      fit: sceneFit.value,
+      outputName: '场景化排版'
+    }))
+    if (result.success) {
+      setPreviewAfter(result.outputPath)
+      ElMessage.success('场景图生成成功')
+      window.electronAPI.openFolder(result.outputDir)
+    } else {
+      ElMessage.error(result.error)
+    }
+  } catch (err) {
+    ElMessage.error('场景排版失败: ' + err.message)
+  }
+  processing.value = false
+}
+
+const handleImageSplit = async () => {
+  const filePaths = await getMultiFilePath()
+  if (!filePaths || filePaths.length < 1) return ElMessage.warning('请选择至少1张图片')
+  processing.value = true
+  try {
+    const result = await window.electronAPI.imageSplit({
+      imagePaths: filePaths,
+      direction: splitDirection.value,
+      targetSize: splitTargetSize.value,
+      overlap: splitOverlap.value,
+      format: splitFormat.value,
+      outputName: splitOutputName.value
+    })
+    if (result.success) {
+      ElMessage.success(`图片切片完成，共导出 ${result.sliceCount} 张`)
+      window.electronAPI.openFolder(result.outputDir)
+    } else {
+      ElMessage.error(result.error || '图片切片失败')
+    }
+  } catch (err) {
+    ElMessage.error('图片切片失败: ' + err.message)
+  }
+  processing.value = false
+}
+
 // ========== 视频处理 ==========
 const handleImagesToVideo = async () => {
   const filePaths = await getMultiFilePath()
   if (!filePaths || filePaths.length < 1) return ElMessage.warning('请选择至少1张图片')
   processing.value = true
   try {
-    const result = await window.electronAPI.videoCreate({
+    const result = await window.electronAPI.videoCreate(buildVideoCreateRequest({
       imagePaths: filePaths,
-      durationPerImage: videoDuration.value
-    })
+      mode: videoMode.value,
+      durationPerImage: videoDuration.value,
+      transition: videoTransition.value,
+      resolution: videoResolution.value
+    }))
     if (result.success) {
       ElMessage.success('视频生成成功！')
       window.electronAPI.openFolder(result.outputDir)
@@ -736,7 +1346,12 @@ const handlePdfToImages = async () => {
   if (!filePath) return
   processing.value = true
   try {
-    const result = await window.electronAPI.docPdfToImages({ inputPath: filePath })
+    const result = await window.electronAPI.docPdfToImages(buildPdfImagesRequest({
+      inputPath: filePath,
+      pageRange: pdfPageRange.value,
+      resolution: pdfImageResolution.value,
+      downloadMode: pdfExportZip.value ? 'zip' : 'images'
+    }, { totalPages: 9999 }))
     if (result.success) {
       ElMessage.success(`PDF转图片成功！共 ${result.pageCount} 页`)
       window.electronAPI.openFolder(result.outputDir)
@@ -1023,6 +1638,192 @@ const handleClose = () => {
     border-radius: 4px;
     border: 1px solid #dcdfe6;
   }
+}
+
+.bg-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+
+  span {
+    color: #606266;
+    font-size: 13px;
+  }
+}
+
+.scene-compose-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.scene-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 180px));
+  gap: 12px;
+
+  div {
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    background: #ffffff;
+    border: 1px solid #dfe7f2;
+    border-radius: 8px;
+  }
+
+  span {
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  img {
+    width: 100%;
+    height: 96px;
+    object-fit: contain;
+    background: #f8fafc;
+    border-radius: 6px;
+  }
+}
+
+.split-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.feishu-section {
+  display: grid;
+  gap: 12px;
+}
+
+.feishu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.feishu-row-range,
+.feishu-folder-row,
+.feishu-summary,
+.feishu-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.feishu-row-range {
+  padding: 0 10px;
+  min-height: 40px;
+  background: #ffffff;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  color: #606266;
+}
+
+.feishu-folder-list {
+  display: grid;
+  gap: 10px;
+}
+
+.feishu-folder-row {
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+}
+
+.feishu-folder-row .el-input {
+  flex: 1;
+  min-width: 260px;
+}
+
+.feishu-preview-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+}
+
+.feishu-preview-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.feishu-preview-row {
+  padding: 8px 10px;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.empty-tip-inline {
+  color: #909399;
+  font-size: 13px;
+}
+
+.collect-section {
+  display: grid;
+  gap: 12px;
+}
+
+.collect-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(260px, 2fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.collect-preview-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+}
+
+.collect-summary,
+.collect-task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.collect-task-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.collect-task-row {
+  padding: 10px;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.collect-task-main {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 280px;
+}
+
+.collect-task-main span {
+  color: #606266;
+  font-size: 13px;
+}
+
+.collect-task-main small {
+  color: #909399;
+  word-break: break-all;
 }
 
 .tool-section {

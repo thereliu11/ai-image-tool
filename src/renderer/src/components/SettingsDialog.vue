@@ -164,6 +164,24 @@
           </el-form-item>
         </el-form>
       </el-tab-pane>
+
+      <el-tab-pane label="工具设置" name="tools">
+        <el-form :model="formData" label-width="130px" label-position="right" class="settings-form">
+          <el-form-item label="FFmpeg 路径">
+            <el-input v-model="formData.tools.ffmpegPath" readonly placeholder="可选：选择本机 ffmpeg.exe">
+              <template #append>
+                <el-button @click="selectFfmpegPath">选择</el-button>
+                <el-button @click="clearFfmpegPath">清空</el-button>
+              </template>
+            </el-input>
+            <span class="form-tip">视频生成、视频转 GIF、PDF 转视频需要 FFmpeg。留空会优先使用内置 FFmpeg，再尝试系统 PATH。</span>
+          </el-form-item>
+          <el-form-item label="FFmpeg 检测">
+            <el-button @click="testFfmpegPath">测试 FFmpeg</el-button>
+            <span class="form-tip">{{ ffmpegTestText }}</span>
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
     </el-tabs>
 
     <template #footer>
@@ -214,13 +232,6 @@ const API_PROVIDERS = {
     tokenPlaceholder: 'AIza...',
     supportsImage: true
   },
-  zhipu: {
-    name: '智谱 AI',
-    baseURL: 'https://open.bigmodel.cn/api/paas/v4',
-    imageModel: 'cogview-4',
-    tokenPlaceholder: '智谱 API Key',
-    supportsImage: true
-  },
   deepseek: {
     name: 'DeepSeek',
     baseURL: 'https://api.deepseek.com/v1',
@@ -241,6 +252,13 @@ const API_PROVIDERS = {
     imageModel: '',
     tokenPlaceholder: '小米 API Key',
     supportsImage: false
+  },
+  aihubmix: {
+    name: 'AiHubMix',
+    baseURL: 'https://aihubmix.com/api/v1',
+    imageModel: 'gpt-image-2',
+    tokenPlaceholder: 'AiHubMix API Key',
+    supportsImage: true
   }
 }
 
@@ -257,6 +275,8 @@ function cloneConfigForForm(config) {
   cloned.originality = cloned.originality || {}
   cloned.rateLimit = cloned.rateLimit || {}
   cloned.batch = cloned.batch || {}
+  cloned.tools = cloned.tools || {}
+  cloned.tools.ffmpegPath = cloned.tools.ffmpegPath || ''
   cloned.api.provider = cloned.api.provider || 'openai'
   cloned.api.baseURL = cloned.api.baseURL || API_PROVIDERS[cloned.api.provider]?.baseURL || API_PROVIDERS.openai.baseURL
   cloned.api.imageModel = cloned.api.imageModel || API_PROVIDERS[cloned.api.provider]?.imageModel || 'gpt-image-2'
@@ -268,6 +288,7 @@ function cloneConfigForForm(config) {
 
 const formData = ref(cloneConfigForForm(store.config))
 const apiKeysText = ref((formData.value.api.apiKeys || []).join('\n'))
+const ffmpegTestText = ref('')
 
 const opacityRange = ref([
   formData.value.originality.minOpacity ?? 3,
@@ -299,6 +320,45 @@ async function selectOverlayFolder() {
   const result = await window.electronAPI.openFolderDialog()
   if (!result.canceled) {
     formData.value.originality.overlayFolder = result.filePaths[0]
+  }
+}
+
+async function selectFfmpegPath() {
+  const result = await window.electronAPI.openFileDialog({
+    properties: ['openFile'],
+    title: '选择 ffmpeg.exe',
+    filters: [
+      { name: 'FFmpeg', extensions: ['exe'] },
+      { name: '所有文件', extensions: ['*'] }
+    ]
+  })
+  if (!result.canceled && result.filePaths?.length) {
+    formData.value.tools.ffmpegPath = result.filePaths[0]
+    ffmpegTestText.value = ''
+  }
+}
+
+function clearFfmpegPath() {
+  formData.value.tools.ffmpegPath = ''
+  ffmpegTestText.value = ''
+}
+
+async function testFfmpegPath() {
+  try {
+    const result = await window.electronAPI.testFfmpegPath({
+      ffmpegPath: formData.value.tools.ffmpegPath
+    })
+    ffmpegTestText.value = result.installed
+      ? `可用：${result.path}`
+      : (result.error || 'FFmpeg 不可用')
+    if (result.installed) {
+      ElMessage.success('FFmpeg 可用')
+    } else {
+      ElMessage.warning(ffmpegTestText.value)
+    }
+  } catch (error) {
+    ffmpegTestText.value = error.message || 'FFmpeg 检测失败'
+    ElMessage.error(ffmpegTestText.value)
   }
 }
 

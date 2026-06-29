@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ==================== 图片生成 ====================
   generateImage: (params) => ipcRenderer.invoke('generate-image', params),
+  textToImageGenerate: (params) => ipcRenderer.invoke('text-to-image-generate', params),
   applyEnhancement: (params) => ipcRenderer.invoke('apply-enhancement', params),
   batchGenerate: (params) => ipcRenderer.invoke('batch-generate', params),
   stopGeneration: (params) => ipcRenderer.invoke('stop-generation', params),
@@ -29,6 +30,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   imageCompress: (params) => ipcRenderer.invoke('image-compress', params),
   imageCollage: (params) => ipcRenderer.invoke('image-collage', params),
   imageBgReplace: (params) => ipcRenderer.invoke('image-bg-replace', params),
+  imageSceneCompose: (params) => ipcRenderer.invoke('image-scene-compose', params),
+  imageSplit: (params) => ipcRenderer.invoke('image-split', params),
+  xhsGoodsDownload: (params) => ipcRenderer.invoke('xhs-goods-download', params),
 
   // ==================== 视频处理（百宝箱） ====================
   videoCreate: (params) => ipcRenderer.invoke('video-create', params),
@@ -63,6 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ==================== 模板库 ====================
   getTemplates: () => ipcRenderer.invoke('get-templates'),
+  analyzeLayoutTemplate: (params) => ipcRenderer.invoke('analyze-layout-template', params),
   saveTemplate: (params) => ipcRenderer.invoke('save-template', params),
   deleteTemplate: (params) => ipcRenderer.invoke('delete-template', params),
   readJsonFile: (params) => ipcRenderer.invoke('read-json-file', params),
@@ -76,7 +81,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ocrToDocx: (params) => ipcRenderer.invoke('ocr-to-docx', params),
   ocrExtractText: (params) => ipcRenderer.invoke('ocr-extract-text', params),
   qualityCheckImage: (params) => ipcRenderer.invoke('quality-check-image', params),
+  visualQualityCheckImage: (params) => ipcRenderer.invoke('visual-quality-check-image', params),
   rewriteDocument: (params) => ipcRenderer.invoke('rewrite-document', params),
+  separationExport: (params) => ipcRenderer.invoke('separation-export', params),
 
   // ==================== 智能去字/提取底图 ====================
   removeText: (params) => ipcRenderer.invoke('remove-text', params),
@@ -95,6 +102,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ==================== 系统检测 ====================
   checkLibreOffice: () => ipcRenderer.invoke('check-libreoffice'),
+  checkFfmpeg: () => ipcRenderer.invoke('check-ffmpeg'),
+  testFfmpegPath: (params) => ipcRenderer.invoke('test-ffmpeg-path', params),
   networkDiagnosis: () => ipcRenderer.invoke('network-diagnosis'),
 
   // ==================== 日志 ====================
@@ -109,6 +118,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onLogMessage: (callback) => ipcRenderer.on('log-message', (event, message) => callback(message)),
   onProgressUpdate: (callback) => ipcRenderer.on('update-progress', (event, data) => callback(data)),
   onItemStatusUpdate: (callback) => ipcRenderer.on('update-item-status', (event, item) => callback(item)),
+
+  // ==================== 自动更新 ====================
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, data) => callback(data)),
+  onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', (event) => callback()),
+  onUpdateDownloadProgress: (callback) => ipcRenderer.on('update-download-progress', (event, data) => callback(data)),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, data) => callback(data)),
+  onUpdateError: (callback) => ipcRenderer.on('update-error', (event, data) => callback(data)),
 
   // ==================== 移除监听器 ====================
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)

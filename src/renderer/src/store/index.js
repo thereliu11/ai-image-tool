@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { getImageSizeOptions } from '../../../shared/imageSizeSpec.mjs'
 
 export const useAppStore = defineStore('app', () => {
   // ==================== 状态 ====================
@@ -47,6 +48,9 @@ export const useAppStore = defineStore('app', () => {
     batch: {
       maxBatchSize: 20,
       maxConcurrency: 4
+    },
+    tools: {
+      ffmpegPath: ''
     }
   })
 
@@ -55,12 +59,10 @@ export const useAppStore = defineStore('app', () => {
   const previewIndex = ref(0)
 
   // 尺寸和分辨率选项
-  const sizeOptions = [
-    { label: '竖版 2:3 (推荐)', value: '1024x1536' },
-    { label: '方图 1:1', value: '1024x1024' },
-    { label: '横版 3:2', value: '1536x1024' },
-    { label: '自动', value: 'auto' }
-  ]
+  const sizeOptions = getImageSizeOptions().map(option => ({
+    label: option.label,
+    value: option.value
+  }))
   const selectedSize = ref('1024x1536')
 
   const resolutionOptions = [

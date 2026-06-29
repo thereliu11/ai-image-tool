@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+  <defs>
+    <style>
+      .bg{fill:#f4f7fb}
+      .panel{fill:#fff;stroke:#d8e4f0;stroke-width:2}
+      .title{font:700 36px "Microsoft YaHei",Arial,sans-serif;fill:#142033}
+      .sub{font:400 22px "Microsoft YaHei",Arial,sans-serif;fill:#64748b}
+      .h{font:700 25px "Microsoft YaHei",Arial,sans-serif;fill:#172033}
+      .p{font:400 18px "Microsoft YaHei",Arial,sans-serif;fill:#53627a}
+      .small{font:400 15px "Microsoft YaHei",Arial,sans-serif;fill:#64748b}
+      .badge{fill:#dbeafe;stroke:#93c5fd;stroke-width:1}
+      .badgeText{font:700 15px "Microsoft YaHei",Arial,sans-serif;fill:#1d4ed8}
+      .nav{fill:#eef4fb;stroke:#d8e4f0;stroke-width:1}
+      .canvas{fill:#f8fafc;stroke:#cbd5e1;stroke-width:2;stroke-dasharray:8 8}
+      .side{fill:#f1f5f9;stroke:#d8e4f0;stroke-width:1}
+      .button{fill:#2563eb}
+      .buttonText{font:700 15px "Microsoft YaHei",Arial,sans-serif;fill:#fff}
+      .recommended{fill:#dcfce7;stroke:#86efac;stroke-width:2}
+      .recText{font:700 16px "Microsoft YaHei",Arial,sans-serif;fill:#166534}
+    </style>
+  </defs>
+  <rect class="bg" width="1600" height="1050"/>
+  <text class="title" x="70" y="72">第二阶段：图文分离编辑器方案</text>
+  <text class="sub" x="70" y="112">目标闭环：导入素材 → OCR 分层 → 区域调整/画笔修补/文本编辑 → 导出 PPT、Word、图片</text>
+
+  <rect class="panel" x="60" y="155" width="455" height="660" rx="14"/>
+  <rect class="badge" x="90" y="185" width="142" height="34" rx="17"/>
+  <text class="badgeText" x="114" y="208">A 轻量补强</text>
+  <text class="h" x="90" y="255">百宝箱弹窗增强版</text>
+  <text class="p" x="90" y="292">开发最快，但仍是工具集合。</text>
+  <text class="p" x="90" y="320">适合临时处理，不适合精修。</text>
+  <rect class="nav" x="90" y="360" width="395" height="46" rx="8"/>
+  <text class="small" x="112" y="390">OCR导出 | AI擦除 | 字体管理 | 导出</text>
+  <rect class="canvas" x="90" y="430" width="395" height="230" rx="10"/>
+  <text class="sub" x="205" y="535">单图预览</text>
+  <rect class="button" x="105" y="690" width="95" height="38" rx="8"/>
+  <text class="buttonText" x="132" y="715">去字</text>
+  <rect class="button" x="215" y="690" width="120" height="38" rx="8"/>
+  <text class="buttonText" x="240" y="715">导出PPT</text>
+  <rect class="button" x="350" y="690" width="120" height="38" rx="8"/>
+  <text class="buttonText" x="375" y="715">上传字体</text>
+  <text class="small" x="90" y="770">优点：快、风险低</text>
+  <text class="small" x="90" y="798">缺点：不像完整工作台，后续扩展吃力</text>
+
+  <rect class="panel" x="570" y="155" width="455" height="660" rx="14"/>
+  <rect class="recommended" x="600" y="185" width="188" height="34" rx="17"/>
+  <text class="recText" x="626" y="208">B 推荐：独立工作台</text>
+  <text class="h" x="600" y="255">独立图文分离工作台</text>
+  <text class="p" x="600" y="292">最贴近文档和群友工具。</text>
+  <text class="p" x="600" y="320">第一版可控，后续可继续扩展。</text>
+  <rect class="side" x="600" y="360" width="105" height="300" rx="10"/>
+  <text class="small" x="622" y="395">页面列表</text>
+  <text class="small" x="622" y="430">001 完成</text>
+  <text class="small" x="622" y="462">002 待修</text>
+  <text class="small" x="622" y="494">003 待导出</text>
+  <rect class="canvas" x="720" y="360" width="165" height="300" rx="10"/>
+  <text class="small" x="764" y="490">中央画布</text>
+  <text class="small" x="740" y="522">底图 + 文本层</text>
+  <rect class="side" x="900" y="360" width="95" height="300" rx="10"/>
+  <text class="small" x="918" y="395">图层</text>
+  <text class="small" x="918" y="430">文本</text>
+  <text class="small" x="918" y="462">遮罩</text>
+  <text class="small" x="918" y="494">字体</text>
+  <text class="small" x="918" y="526">导出</text>
+  <text class="small" x="600" y="710">覆盖：区域调整、画笔修补、文本编辑</text>
+  <text class="small" x="600" y="742">覆盖：字体替换、OCR导出、批量状态</text>
+  <text class="small" x="600" y="774">风险：中等，适合第二阶段</text>
+
+  <rect class="panel" x="1080" y="155" width="455" height="660" rx="14"/>
+  <rect class="badge" x="1110" y="185" width="170" height="34" rx="17"/>
+  <text class="badgeText" x="1135" y="208">C 专业编辑器</text>
+  <text class="h" x="1110" y="255">类 PS 专业编辑器</text>
+  <text class="p" x="1110" y="292">上限最高，但风险也最高。</text>
+  <text class="p" x="1110" y="320">更适合作为第三阶段。</text>
+  <rect class="side" x="1110" y="360" width="60" height="300" rx="10"/>
+  <text class="small" x="1125" y="395">工具</text>
+  <text class="small" x="1125" y="430">选区</text>
+  <text class="small" x="1125" y="462">画笔</text>
+  <text class="small" x="1125" y="494">文字</text>
+  <rect class="side" x="1185" y="360" width="80" height="300" rx="10"/>
+  <text class="small" x="1205" y="395">资源</text>
+  <text class="small" x="1205" y="430">页面</text>
+  <text class="small" x="1205" y="462">历史</text>
+  <rect class="canvas" x="1280" y="360" width="120" height="300" rx="10"/>
+  <text class="small" x="1305" y="490">画布</text>
+  <rect class="side" x="1415" y="360" width="90" height="300" rx="10"/>
+  <text class="small" x="1432" y="395">属性</text>
+  <text class="small" x="1432" y="430">图层</text>
+  <text class="small" x="1432" y="462">批处理</text>
+  <text class="small" x="1110" y="710">优点：最终上限最高</text>
+  <text class="small" x="1110" y="742">缺点：开发量大，容易拖慢主项目</text>
+  <text class="small" x="1110" y="774">建议：第三阶段再做</text>
+
+  <rect class="panel" x="60" y="850" width="1475" height="130" rx="14"/>
+  <text class="h" x="90" y="900">推荐执行方案：B</text>
+  <text class="p" x="90" y="936">第二阶段先做“独立图文分离工作台”：页面列表、中央画布、右侧图层/字体/导出设置。第一版实现矩形区域、画笔遮罩、文本框编辑、字体替换和导出。</text>
+  <text class="p" x="90" y="966">暂不做复杂滤镜、完整历史栈、像素级专业修图，避免把工程拖成大重构。</text>
+</svg>
