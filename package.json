@@ -1,6 +1,6 @@
 {
   "name": "ai-image-tool",
-  "version": "26.06.30",
+  "version": "26.07.01",
   "description": "智绘AI - 批量 AI 教辅图片重绘桌面端应用",
   "author": "智绘AI团队",
   "main": "src/main/main.js",
